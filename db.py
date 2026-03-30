@@ -11,12 +11,42 @@ from urllib.parse import quote_plus
 @st.cache_resource
 def get_engine():
     s = st.secrets["database"]
+
+    # Detect available ODBC driver — Streamlit Cloud (Linux) may differ from Windows
+    import pyodbc
+    available = [d for d in pyodbc.drivers() if "SQL Server" in d]
+    driver = sorted(available)[-1] if available else s.get("driver", "ODBC Driver 17 for SQL Server")
+
     conn_str = (
         f"mssql+pyodbc://{s['username']}:{quote_plus(s['password'])}"
         f"@{s['server']}/{s['database']}"
-        f"?driver={s['driver'].replace(' ', '+')}"
+        f"?driver={driver.replace(' ', '+')}"
+        f"&TrustServerCertificate=yes"
+        f"&Encrypt=yes"
+        f"&Connection+Timeout=30"
     )
-    return create_engine(conn_str, fast_executemany=False)
+
+    try:
+        engine = create_engine(conn_str, fast_executemany=False)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return engine
+    except Exception as e:
+        st.error(f"""
+**Database connection failed.**
+
+Driver detected: `{driver}`
+Server: `{s.get("server", "not set")}`
+Database: `{s.get("database", "not set")}`
+Error: `{str(e)}`
+
+**Things to check:**
+1. SQL Server firewall — allow connections from `0.0.0.0/0` (all IPs) or Streamlit Cloud IPs
+2. Server name in secrets matches your Azure SQL server exactly (include `.database.windows.net`)
+3. Username / password correct
+4. Encrypt + TrustServerCertificate settings on your SQL Server
+        """)
+        st.stop()
 
 
 @st.cache_data(ttl=3600)
