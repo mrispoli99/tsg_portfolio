@@ -1,0 +1,16 @@
+# 73 Strings → SQL Server pipeline dependencies
+requests>=2.31.0
+pandas>=2.0.0
+sqlalchemy>=2.0.0
+pyodbc>=5.0.0
+python-dateutil>=2.8.2
+streamlit>=1.32.0
+plotly>=5.18.0
+anthropic>=0.25.0
+feedparser>=6.0.0
+kaleido>=0.2.1
+
+# Optional but recommended for SQL Server on Azure:
+# mssql-django is NOT needed; pyodbc + the ODBC Driver is sufficient.
+# Install ODBC Driver 17 or 18 from Microsoft before running:
+#   https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
