@@ -402,8 +402,9 @@ def check_password() -> bool:
 # ---------------------------------------------------------------------------
 
 def render_header(title: str, subtitle: str = "TSG Consumer Partners"):
-    """Compatibility shim — pages_extra.py still calls this."""
-    render_page_header(title)
+    """Compatibility shim."""
+    from ui import render_page_header as _rph
+    _rph(title)
 
 
 # ---------------------------------------------------------------------------
@@ -423,16 +424,15 @@ PAGES = [
 
 
 def render_top_nav():
-    """Render the TSG brand bar + horizontal nav tab bar."""
-    # Get current page and red flag count for badge
+    """Render the TSG brand bar + horizontal nav using st.radio styled as tabs."""
     current = st.session_state.get("page", "portfolio_overview")
+
     try:
         flags_df  = load_flags()
         red_count = int((flags_df["overall_flag"] == "Red").sum()) if not flags_df.empty else 0
     except Exception:
         red_count = 0
 
-    # Data as-of from last refresh
     as_of = ""
     try:
         ltm = load_ltm_snapshot()
@@ -441,13 +441,7 @@ def render_top_nav():
     except Exception:
         pass
 
-    # Build nav tab HTML
-    tabs_html = ""
-    for label, key in PAGES:
-        active_cls = "active" if current == key else ""
-        badge      = f'<span class="tsg-nav-badge">{red_count}</span>'                      if key == "flags_alerts" and red_count > 0 else ""
-        tabs_html += f'<span class="tsg-nav-tab {active_cls}" id="nav-{key}">{label}{badge}</span>'
-
+    # Brand bar
     st.markdown(f"""
     <div class="tsg-brand-bar">
         <div class="tsg-brand-logo">
@@ -455,44 +449,86 @@ def render_top_nav():
         </div>
         <div class="tsg-brand-meta">
             {"As of " + as_of if as_of else "Portfolio Analytics"}
-            &nbsp;|&nbsp;
-            <span style="cursor:pointer;" onclick="window.location.reload()">↻ Refresh</span>
         </div>
     </div>
-    <div class="tsg-nav-bar">{tabs_html}</div>
     """, unsafe_allow_html=True)
 
-    # Actual navigation — Streamlit buttons hidden behind the HTML tabs
-    # Use a single row of small buttons that map to page keys
-    btn_cols = st.columns(len(PAGES))
-    for i, (label, key) in enumerate(PAGES):
-        if btn_cols[i].button(label, key=f"nav_{key}", use_container_width=True,
-                               help=f"Go to {label}"):
-            st.session_state["page"] = key
-            # Clear any drill-down state when navigating
-            for k in ["drill_page", "drill_company", "drill_metric"]:
-                st.session_state.pop(k, None)
-            st.rerun()
+    # Build page labels (add badge text for flags)
+    labels = []
+    for label, key in PAGES:
+        if key == "flags_alerts" and red_count > 0:
+            labels.append(f"{label} ({red_count})")
+        else:
+            labels.append(label)
 
-    # Hide the actual Streamlit buttons visually — they're just triggers
+    keys   = [k for _, k in PAGES]
+
+    # Use st.radio with horizontal layout — styled to look like tabs
+    current_label = labels[keys.index(current)] if current in keys else labels[0]
+
     st.markdown("""
     <style>
-    /* Make nav buttons invisible — they're triggered by the HTML tabs above */
-    div[data-testid="column"] button[kind="secondary"] {
-        opacity: 0 !important;
-        height: 0px !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        min-height: 0 !important;
-        overflow: hidden !important;
-        pointer-events: all !important;
+    /* Style radio buttons as tab bar */
+    div[data-testid="stRadio"] {
+        background: white;
+        border-bottom: 2px solid #E0E4EA;
+        padding: 0 8px;
+        margin: 0;
     }
-    div[data-testid="column"] {
-        padding: 0 !important;
+    div[data-testid="stRadio"] > div {
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
         gap: 0 !important;
+    }
+    div[data-testid="stRadio"] label {
+        padding: 10px 16px !important;
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        color: #3F6680 !important;
+        border-bottom: 3px solid transparent !important;
+        margin-bottom: -2px !important;
+        cursor: pointer !important;
+        white-space: nowrap !important;
+        background: transparent !important;
+    }
+    div[data-testid="stRadio"] label:hover {
+        color: #071733 !important;
+        border-bottom-color: #A8CFDE !important;
+    }
+    div[data-testid="stRadio"] label[data-selected="true"],
+    div[data-testid="stRadio"] input:checked + div {
+        color: #071733 !important;
+        font-weight: 700 !important;
+        border-bottom: 3px solid #071733 !important;
+    }
+    /* Hide the radio circles */
+    div[data-testid="stRadio"] input[type="radio"] {
+        display: none !important;
+    }
+    div[data-testid="stRadio"] svg {
+        display: none !important;
+    }
+    div[data-testid="stRadio"] > label {
+        display: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
+
+    selected_label = st.radio(
+        "nav", labels,
+        index=labels.index(current_label) if current_label in labels else 0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="nav_radio"
+    )
+
+    # Map selected label back to page key
+    selected_key = keys[labels.index(selected_label)] if selected_label in labels else keys[0]
+    if selected_key != current:
+        st.session_state["page"] = selected_key
+        for k in ["drill_page", "drill_company", "drill_metric"]:
+            st.session_state.pop(k, None)
+        st.rerun()
 
 
 def render_page_header(title: str):
