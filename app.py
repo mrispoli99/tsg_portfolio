@@ -29,7 +29,7 @@ st.set_page_config(
     page_title="TSG Consumer | Portfolio",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
@@ -60,34 +60,173 @@ COMPANY_COLORS = [
 # ---------------------------------------------------------------------------
 st.markdown(f"""
 <style>
-    /* Page background */
+    /* ---- Reset & base ---- */
     .stApp {{ background-color: {LIGHT_BG}; }}
+    #MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
 
-    /* Header bar */
-    .tsg-header {{
-        background-color: {NAVY};
-        padding: 14px 24px;
-        border-radius: 6px;
-        margin-bottom: 20px;
+    /* ---- Hide sidebar entirely ---- */
+    [data-testid="stSidebar"] {{ display: none !important; }}
+    [data-testid="collapsedControl"] {{ display: none !important; }}
+
+    /* ---- Remove Streamlit default top padding ---- */
+    .block-container {{ padding-top: 0 !important; max-width: 100% !important; }}
+    header[data-testid="stHeader"] {{ display: none !important; }}
+
+    /* ---- Top brand bar ---- */
+    .tsg-brand-bar {{
+        background: {NAVY};
+        padding: 0 24px;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        height: 52px;
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        margin-bottom: 0;
     }}
-    .tsg-header-title {{
-        color: white;
-        font-size: 20px;
+    .tsg-brand-logo {{
+        font-size: 18px;
         font-weight: 700;
+        color: white;
         font-family: Arial, sans-serif;
-        margin: 0;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
     }}
-    .tsg-header-subtitle {{
+    .tsg-brand-meta {{
+        font-size: 11px;
         color: {SKY};
-        font-size: 13px;
         font-family: Arial, sans-serif;
-        margin: 0;
+        text-align: right;
     }}
 
-    /* KPI cards */
+    /* ---- Nav tab bar ---- */
+    .tsg-nav-bar {{
+        background: white;
+        border-bottom: 2px solid {BORDER};
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        gap: 0;
+        overflow-x: auto;
+        white-space: nowrap;
+        margin-bottom: 0;
+    }}
+    .tsg-nav-tab {{
+        display: inline-block;
+        padding: 12px 18px;
+        font-size: 13px;
+        font-family: Arial, sans-serif;
+        font-weight: 500;
+        color: {SLATE};
+        cursor: pointer;
+        border-bottom: 3px solid transparent;
+        margin-bottom: -2px;
+        text-decoration: none;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }}
+    .tsg-nav-tab:hover {{
+        color: {NAVY};
+        border-bottom-color: {SKY};
+    }}
+    .tsg-nav-tab.active {{
+        color: {NAVY};
+        font-weight: 700;
+        border-bottom-color: {NAVY};
+    }}
+
+    /* ---- Alert badge in nav ---- */
+    .tsg-nav-badge {{
+        display: inline-block;
+        background: {RED_FLAG};
+        color: white;
+        font-size: 9px;
+        font-weight: 700;
+        border-radius: 8px;
+        padding: 1px 5px;
+        margin-left: 4px;
+        vertical-align: middle;
+    }}
+
+    /* ---- Page content area ---- */
+    .tsg-page-content {{
+        padding: 16px 24px;
+    }}
+
+    /* ---- Standardized KPI tiles ---- */
+    .kpi-tile {{
+        background: white;
+        border: 1px solid {BORDER};
+        border-radius: 6px;
+        padding: 14px 16px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        height: 90px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }}
+    .kpi-tile-value {{
+        font-size: 24px;
+        font-weight: 700;
+        color: {NAVY};
+        font-family: Arial, sans-serif;
+        line-height: 1.2;
+        white-space: nowrap;
+    }}
+    .kpi-tile-label {{
+        font-size: 10px;
+        color: {SLATE};
+        font-family: Arial, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 4px;
+    }}
+    .kpi-tile-delta {{
+        font-size: 10px;
+        font-family: Arial, sans-serif;
+        margin-top: 2px;
+    }}
+
+    /* ---- Pending data tile (greyed out) ---- */
+    .kpi-tile-pending {{
+        background: #F8F9FA;
+        border: 1px dashed #CCCCCC;
+        border-radius: 6px;
+        padding: 14px 16px;
+        text-align: center;
+        height: 90px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        opacity: 0.7;
+    }}
+    .kpi-tile-pending-value {{
+        font-size: 20px;
+        font-weight: 700;
+        color: #999999;
+        font-family: Arial, sans-serif;
+    }}
+    .kpi-tile-pending-label {{
+        font-size: 10px;
+        color: #999999;
+        font-family: Arial, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 4px;
+    }}
+    .kpi-tile-pending-note {{
+        font-size: 9px;
+        color: #BBBBBB;
+        font-family: Arial, sans-serif;
+        margin-top: 3px;
+        font-style: italic;
+    }}
+
+    /* ---- Keep old kpi-card for compatibility ---- */
     .kpi-card {{
         background: white;
         border: 1px solid {BORDER};
@@ -117,7 +256,7 @@ st.markdown(f"""
         margin-top: 2px;
     }}
 
-    /* Company cards */
+    /* ---- Company cards ---- */
     .company-card {{
         background: white;
         border: 1px solid {BORDER};
@@ -147,14 +286,14 @@ st.markdown(f"""
         margin: 2px;
     }}
 
-    /* Flag badges */
+    /* ---- Flag badges ---- */
     .flag-red    {{ background: #FDECEA; color: {RED_FLAG}; border: 1px solid {RED_FLAG}; }}
     .flag-yellow {{ background: #FEF9E7; color: #B7860B;   border: 1px solid {XANTHOUS}; }}
     .flag-green  {{ background: #EAFAF1; color: {SEA_GREEN}; border: 1px solid {SEA_GREEN}; }}
 
-    /* Section headers */
+    /* ---- Section headers ---- */
     .section-header {{
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 700;
         color: {SLATE};
         font-family: Arial, sans-serif;
@@ -166,7 +305,7 @@ st.markdown(f"""
         margin-top: 20px;
     }}
 
-    /* Alert banner */
+    /* ---- Alert banner ---- */
     .alert-banner {{
         background: #FDECEA;
         border-left: 4px solid {RED_FLAG};
@@ -178,7 +317,7 @@ st.markdown(f"""
         font-family: Arial, sans-serif;
     }}
 
-    /* Chat bubbles */
+    /* ---- Chat bubbles ---- */
     .chat-user {{
         background: {NAVY};
         color: white;
@@ -202,23 +341,13 @@ st.markdown(f"""
         max-width: 90%;
     }}
 
-    /* Hide Streamlit default elements */
-    #MainMenu {{ visibility: hidden; }}
-    footer {{ visibility: hidden; }}
-    .stDeployButton {{ display: none; }}
-
-    /* Sidebar */
-    [data-testid="stSidebar"] {{
-        background-color: {NAVY} !important;
-    }}
-    [data-testid="stSidebar"] * {{
-        color: white !important;
-    }}
-    [data-testid="stSidebar"] .stSelectbox label {{
-        color: {SKY} !important;
-        font-size: 11px !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+    /* ---- Streamlit button styling in nav ---- */
+    .stButton > button {{
+        background: transparent;
+        border: none;
+        padding: 0;
+        font-size: 13px;
+        font-family: Arial, sans-serif;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -273,17 +402,129 @@ def check_password() -> bool:
 # ---------------------------------------------------------------------------
 
 def render_header(title: str, subtitle: str = "TSG Consumer Partners"):
+    """Compatibility shim — pages_extra.py still calls this."""
+    render_page_header(title)
+
+
+# ---------------------------------------------------------------------------
+# Top navigation bar
+# ---------------------------------------------------------------------------
+
+PAGES = [
+    ("Portfolio Overview",  "portfolio_overview"),
+    ("Fund Snapshot",       "fund_summary"),
+    ("Company Detail",      "company_detail"),
+    ("Flags & Alerts",      "flags_alerts"),
+    ("Consumer KPIs",       "consumer_kpis"),
+    ("Portfolio Flags",     "portfolio_flags"),
+    ("AI Analyst",          "ai_analyst"),
+    ("Export to PPT",       "export_ppt"),
+]
+
+
+def render_top_nav():
+    """Render the TSG brand bar + horizontal nav tab bar."""
+    # Get current page and red flag count for badge
+    current = st.session_state.get("page", "portfolio_overview")
+    try:
+        flags_df  = load_flags()
+        red_count = int((flags_df["overall_flag"] == "Red").sum()) if not flags_df.empty else 0
+    except Exception:
+        red_count = 0
+
+    # Data as-of from last refresh
+    as_of = ""
+    try:
+        ltm = load_ltm_snapshot()
+        if not ltm.empty and "as_of_date" in ltm.columns:
+            as_of = str(ltm["as_of_date"].max())[:10]
+    except Exception:
+        pass
+
+    # Build nav tab HTML
+    tabs_html = ""
+    for label, key in PAGES:
+        active_cls = "active" if current == key else ""
+        badge      = f'<span class="tsg-nav-badge">{red_count}</span>'                      if key == "flags_alerts" and red_count > 0 else ""
+        tabs_html += f'<span class="tsg-nav-tab {active_cls}" id="nav-{key}">{label}{badge}</span>'
+
     st.markdown(f"""
-    <div class="tsg-header">
-        <div>
-            <p class="tsg-header-title">TSG <span style="color:{SKY}; font-weight:400;">CONSUMER</span></p>
-            <p class="tsg-header-subtitle">{subtitle}</p>
+    <div class="tsg-brand-bar">
+        <div class="tsg-brand-logo">
+            TSG <span style="color:{SKY}; font-weight:400;">CONSUMER</span>
         </div>
-        <div style="text-align:right;">
-            <p style="color:{SKY}; font-size:12px; font-family:Arial; margin:0;">{title}</p>
+        <div class="tsg-brand-meta">
+            {"As of " + as_of if as_of else "Portfolio Analytics"}
+            &nbsp;|&nbsp;
+            <span style="cursor:pointer;" onclick="window.location.reload()">↻ Refresh</span>
         </div>
     </div>
+    <div class="tsg-nav-bar">{tabs_html}</div>
     """, unsafe_allow_html=True)
+
+    # Actual navigation — Streamlit buttons hidden behind the HTML tabs
+    # Use a single row of small buttons that map to page keys
+    btn_cols = st.columns(len(PAGES))
+    for i, (label, key) in enumerate(PAGES):
+        if btn_cols[i].button(label, key=f"nav_{key}", use_container_width=True,
+                               help=f"Go to {label}"):
+            st.session_state["page"] = key
+            # Clear any drill-down state when navigating
+            for k in ["drill_page", "drill_company", "drill_metric"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+
+    # Hide the actual Streamlit buttons visually — they're just triggers
+    st.markdown("""
+    <style>
+    /* Make nav buttons invisible — they're triggered by the HTML tabs above */
+    div[data-testid="column"] button[kind="secondary"] {
+        opacity: 0 !important;
+        height: 0px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+        pointer-events: all !important;
+    }
+    div[data-testid="column"] {
+        padding: 0 !important;
+        gap: 0 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def render_page_header(title: str):
+    """Slim page title — replaces the old full render_header."""
+    st.markdown(f"""
+    <div style="padding: 12px 0 8px 0; border-bottom: 1px solid {BORDER}; margin-bottom: 16px;">
+        <span style="font-size:18px; font-weight:700; color:{NAVY};
+                     font-family:Arial;">{title}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def kpi_tile(value: str, label: str, delta: str = "", delta_color: str = SLATE) -> str:
+    """Standardized KPI tile — fixed height, consistent sizing."""
+    delta_html = (f'<div class="kpi-tile-delta" style="color:{delta_color};">{delta}</div>'
+                  if delta else "")
+    return f"""
+    <div class="kpi-tile">
+        <div class="kpi-tile-value">{value}</div>
+        <div class="kpi-tile-label">{label}</div>
+        {delta_html}
+    </div>"""
+
+
+def kpi_tile_pending(label: str, note: str = "** Pending Investran data") -> str:
+    """Greyed-out placeholder tile for data not yet available."""
+    return f"""
+    <div class="kpi-tile-pending">
+        <div class="kpi-tile-pending-value">—</div>
+        <div class="kpi-tile-pending-label">{label}</div>
+        <div class="kpi-tile-pending-note">{note}</div>
+    </div>"""
 
 
 def kpi_card(value: str, label: str, delta: str = "", delta_color: str = SLATE):
@@ -294,6 +535,8 @@ def kpi_card(value: str, label: str, delta: str = "", delta_color: str = SLATE):
         {"" if not delta else f'<div class="kpi-delta" style="color:{delta_color};">{delta}</div>'}
     </div>
     """
+
+
 
 
 def flag_badge(flag: str) -> str:
@@ -312,154 +555,238 @@ def page_portfolio_overview():
         if d["page"] == "overview" and d["company"]:
             drill_company_detail(d["company"])
             return
-    render_header("Portfolio Overview")
+
+    render_page_header("Portfolio Overview")
 
     _ov_df = load_portfolio_overview()
     if _ov_df.empty:
-        st.error("Portfolio overview data not loaded. Check that CSV files are in the `data/` folder.")
-        st.info(f"Looking for data in: `{__import__('pathlib').Path(__file__).parent / 'data'}`")
+        st.error("Portfolio overview data not loaded. Check CSV files.")
         st.stop()
     overview = _ov_df.iloc[0]
     flags    = load_flags()
-    ltm      = load_ltm_snapshot()
     fs       = load_fund_summary()
 
-    # Alert banner for red flags
-    red_companies = flags[flags["overall_flag"] == "Red"]["company_name"].tolist()
+    # -----------------------------------------------------------------------
+    # FILTERS
+    # -----------------------------------------------------------------------
+    with st.expander("Filters", expanded=False):
+        f_col1, f_col2 = st.columns(2)
+        with f_col1:
+            sectors = sorted(fs["sector"].dropna().unique().tolist()) if not fs.empty else []
+            sel_sectors = st.multiselect("Sector", sectors, default=sectors,
+                                          label_visibility="visible")
+        with f_col2:
+            if not fs.empty and "investment_date" in fs.columns:
+                fs["_inv_year"] = pd.to_datetime(fs["investment_date"], errors="coerce").dt.year
+                years = sorted(fs["_inv_year"].dropna().unique().astype(int).tolist())
+            else:
+                years = []
+            if years:
+                yr_range = st.slider("Acquisition Year", min_value=int(min(years)),
+                                      max_value=int(max(years)),
+                                      value=(int(min(years)), int(max(years))))
+            else:
+                yr_range = None
+
+    # Apply filters
+    fs_filtered = fs.copy()
+    if sel_sectors:
+        fs_filtered = fs_filtered[fs_filtered["sector"].isin(sel_sectors)]
+    if yr_range and "_inv_year" in fs_filtered.columns:
+        fs_filtered = fs_filtered[
+            fs_filtered["_inv_year"].between(yr_range[0], yr_range[1])
+        ]
+
+    # Recompute overview metrics from filtered set
+    total_tev      = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
+    total_revenue  = fs_filtered["ltm_revenue"].sum()   if not fs_filtered.empty else None
+    total_ebitda   = fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None
+    avg_leverage   = (fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum() /                      fs_filtered["current_tev"].sum()                      if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None
+    avg_margin     = fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None
+
+    # -----------------------------------------------------------------------
+    # ALERT BANNER
+    # -----------------------------------------------------------------------
+    flags_filtered = flags[flags["company_name"].isin(fs_filtered["company_name"])]                      if not flags.empty else flags
+    red_companies  = flags_filtered[flags_filtered["overall_flag"] == "Red"]["company_name"].tolist()
     if red_companies:
         issues = []
-        for _, row in flags[flags["overall_flag"] == "Red"].iterrows():
+        for _, row in flags_filtered[flags_filtered["overall_flag"] == "Red"].iterrows():
             parts = []
-            if row.get("net_leverage_flag") == "Red":
+            if row.get("net_leverage_flag")   == "Red":
                 parts.append(f"Net Lev {format_multiple(row.get('net_leverage'))}")
             if row.get("revenue_growth_flag") == "Red":
                 parts.append(f"Rev Growth {format_pct(row.get('revenue_yoy'))}")
-            if row.get("ebitda_margin_flag") == "Red":
+            if row.get("ebitda_margin_flag")  == "Red":
                 parts.append(f"EBITDA Margin {format_pct(row.get('ltm_adj_ebitda_margin'))}")
             issues.append(f"<b>{row['company_name']}</b>: {', '.join(parts)}")
-
         st.markdown(f"""
         <div class="alert-banner">
-            🚨 <b>{len(red_companies)} Active Red Flag{"s" if len(red_companies) > 1 else ""}</b> —
+            🚨 <b>{len(red_companies)} Red Flag{"s" if len(red_companies)>1 else ""}</b> —
             {" · ".join(issues)}
         </div>
         """, unsafe_allow_html=True)
 
-    # Top KPI row
-    red   = int(overview.get("red_flag_count", 0))
-    yel   = int(overview.get("yellow_flag_count", 0))
-    grn   = int(overview.get("green_flag_count", 0))
-
-    cols = st.columns(6)
-    cards = [
-        (format_millions(overview.get("total_tev")),          "Total TEV",            ""),
-        (format_millions(overview.get("total_ltm_revenue")),   "LTM Portfolio Revenue",""),
-        (format_millions(overview.get("total_ltm_adj_ebitda")),"LTM Portfolio EBITDA", ""),
-        (format_multiple(overview.get("avg_net_leverage_wtd")),"Avg Net Leverage",     "Weighted by TEV"),
-        (format_pct(overview.get("avg_adj_ebitda_margin")),    "Avg EBITDA Margin",    ""),
-        (f"🔴{red}  🟡{yel}  🟢{grn}",                        "KPI Flags",            f"{int(overview.get('active_company_count',0))} Companies"),
+    # -----------------------------------------------------------------------
+    # KPI TILES — standardized, fixed height, pending for IRR/MOIC
+    # -----------------------------------------------------------------------
+    tile_cols = st.columns(8)
+    tiles = [
+        (format_millions(total_tev),    "Total TEV",         "", False),
+        (format_millions(total_revenue),"LTM Revenue",       "", False),
+        (format_millions(total_ebitda), "LTM EBITDA",        "", False),
+        (format_multiple(avg_leverage), "Avg Net Leverage",  "", False),
+        (format_pct(avg_margin),        "Avg EBITDA Margin", "", False),
+        (None, "Gross MOIC",            "",                      True),
+        (None, "Gross IRR",             "",                      True),
+        (None, "Net IRR",               "",                      True),
     ]
-    for col, (val, label, delta) in zip(cols, cards):
-        col.markdown(kpi_card(val, label, delta), unsafe_allow_html=True)
+    for col, (val, label, delta, pending) in zip(tile_cols, tiles):
+        if pending:
+            col.markdown(kpi_tile_pending(label), unsafe_allow_html=True)
+        else:
+            col.markdown(kpi_tile(val, label), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Charts row
-    col_left, col_right = st.columns([3, 2])
+    # -----------------------------------------------------------------------
+    # CHARTS — Revenue/EBITDA (wider) + Sector donut (smaller)
+    # -----------------------------------------------------------------------
+    col_left, col_right = st.columns([4, 1])   # wider left chart
 
     with col_left:
-        st.markdown('<div class="section-header">Portfolio Revenue & EBITDA — LTM Trend</div>',
+        st.markdown('<div class="section-header">Portfolio Revenue & EBITDA — Quarterly LTM</div>',
                     unsafe_allow_html=True)
         quarterly = load_quarterly()
         if not quarterly.empty:
-            agg = quarterly.groupby("period_label").agg(
-                revenue    = ("revenue", "sum"),
-                adj_ebitda = ("adj_ebitda", "sum"),
+            q_filt = quarterly[quarterly["company_name"].isin(fs_filtered["company_name"])]                      if not fs_filtered.empty else quarterly
+            agg = q_filt.groupby("period_label").agg(
+                revenue        = ("revenue",    "sum"),
+                adj_ebitda     = ("adj_ebitda", "sum"),
                 cash_flow_date = ("cash_flow_date", "max")
             ).reset_index().sort_values("cash_flow_date").tail(12)
 
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            fig.add_trace(go.Bar(
-                x=agg["period_label"], y=agg["revenue"],
-                name="Revenue ($M)", marker_color=SLATE, opacity=0.85
-            ), secondary_y=False)
-            fig.add_trace(go.Bar(
-                x=agg["period_label"], y=agg["adj_ebitda"],
-                name="Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85
-            ), secondary_y=False)
+            fig.add_trace(go.Bar(x=agg["period_label"], y=agg["revenue"],
+                                  name="Revenue ($M)", marker_color=SLATE, opacity=0.85),
+                          secondary_y=False)
+            fig.add_trace(go.Bar(x=agg["period_label"], y=agg["adj_ebitda"],
+                                  name="Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85),
+                          secondary_y=False)
             margin = agg["adj_ebitda"] / agg["revenue"].replace(0, float("nan"))
-            fig.add_trace(go.Scatter(
-                x=agg["period_label"], y=margin,
-                name="EBITDA Margin %", mode="lines+markers",
-                line=dict(color=XANTHOUS, width=2),
-                marker=dict(size=5)
-            ), secondary_y=True)
+            fig.add_trace(go.Scatter(x=agg["period_label"], y=margin,
+                                      name="EBITDA Margin %", mode="lines+markers",
+                                      line=dict(color=XANTHOUS, width=2), marker=dict(size=5)),
+                          secondary_y=True)
             fig.update_layout(
-                height=280, plot_bgcolor="white", paper_bgcolor="white",
-                margin=dict(l=0, r=0, t=10, b=0),
-                legend=dict(orientation="h", y=-0.15, font=dict(size=10)),
-                font=dict(family="Arial", color=NAVY, size=10),
-                barmode="group"
+                height=320, plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=0, t=10, b=0), barmode="group",
+                legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+                font=dict(family="Arial", color=NAVY, size=10)
             )
-            fig.update_yaxes(tickformat="$,.0f", secondary_y=False,
-                             gridcolor=BORDER, gridwidth=1)
+            fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
             fig.update_yaxes(tickformat=".0%", secondary_y=True)
             fig.update_xaxes(tickangle=-45)
             st.plotly_chart(fig, use_container_width=True)
 
     with col_right:
-        st.markdown('<div class="section-header">Portfolio by Sector</div>',
-                    unsafe_allow_html=True)
-        sector_data = fs.groupby("sector")["current_tev"].sum().reset_index()
+        st.markdown('<div class="section-header">% by Sector</div>', unsafe_allow_html=True)
+        sector_data = fs_filtered.groupby("sector")["current_tev"].sum().reset_index()
         sector_data = sector_data.dropna().sort_values("current_tev", ascending=False)
         if not sector_data.empty:
-            fig2 = px.pie(
-                sector_data, values="current_tev", names="sector",
-                hole=0.55,
-                color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS, CELADON,
-                                          SEA_GREEN, MAGENTA, EGGPLANT]
-            )
-            fig2.update_traces(textposition="outside", textinfo="percent+label",
-                               textfont_size=10)
+            fig2 = px.pie(sector_data, values="current_tev", names="sector", hole=0.6,
+                           color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS,
+                                                     CELADON, SEA_GREEN, MAGENTA, EGGPLANT])
+            fig2.update_traces(textposition="inside", textinfo="percent",
+                               textfont_size=9)
             fig2.update_layout(
-                height=280, showlegend=False,
+                height=320, showlegend=True,
+                legend=dict(font=dict(size=9), orientation="v"),
                 margin=dict(l=0, r=0, t=10, b=0),
                 paper_bgcolor="white"
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-    # Company cards grid
-    st.markdown('<div class="section-header">Active Portfolio Companies</div>',
-                unsafe_allow_html=True)
+    # -----------------------------------------------------------------------
+    # ACTIVE PORTFOLIO COMPANIES
+    # -----------------------------------------------------------------------
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    companies = fs.sort_values("overall_flag",
-                                key=lambda x: x.map({"Red": 0, "Yellow": 1, "Green": 2}))
-    cols = st.columns(3)
+    hdr_col, btn_col = st.columns([6, 1])
+    with hdr_col:
+        st.markdown('<div class="section-header">Active Portfolio Companies</div>',
+                    unsafe_allow_html=True)
+    with btn_col:
+        if st.button("View All Flags →", key="goto_flags_from_overview"):
+            st.session_state["page"] = "flags_alerts"
+            st.rerun()
+
+    companies = fs_filtered.sort_values(
+        "overall_flag",
+        key=lambda x: x.map({"Red": 0, "Yellow": 1, "Green": 2})
+    )
+    card_cols = st.columns(3)
     for i, (_, row) in enumerate(companies.iterrows()):
-        col = cols[i % 3]
-        rev_yoy = row.get("revenue_yoy")
-        rev_yoy_str = f"{'▲' if rev_yoy and rev_yoy > 0 else '▼'} {format_pct(rev_yoy)} Rev" if pd.notna(rev_yoy) else ""
+        col        = card_cols[i % 3]
+        cname      = row.get("company_name", "")
+        rev_yoy    = row.get("revenue_yoy")
+        rev_color  = SEA_GREEN if pd.notna(rev_yoy) and rev_yoy > 0 else RED_FLAG
+        yoy_str    = format_pct(rev_yoy) if pd.notna(rev_yoy) else "—"
+
+        # Year acquired
+        inv_date   = row.get("investment_date", "")
+        try:
+            inv_year = str(pd.to_datetime(inv_date).year)
+        except Exception:
+            inv_year = "—"
 
         col.markdown(f"""
         <div class="company-card">
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <div>
-                    <div class="company-name">{row.get('company_name','')}</div>
-                    <div class="company-sector">{row.get('sector','')} · {row.get('geography','')[:20] if pd.notna(row.get('geography')) else ''}</div>
+                    <div class="company-name">{cname}</div>
+                    <div class="company-sector">
+                        {row.get("sector","")} · Acq. {inv_year}
+                    </div>
                 </div>
-                {flag_badge(row.get('overall_flag',''))}
+                {flag_badge(row.get("overall_flag",""))}
             </div>
-            <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
-                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">{format_millions(row.get('ltm_revenue'))}</span><br><span style="font-size:10px;color:{SLATE};">LTM Rev</span></div>
-                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">{format_multiple(row.get('net_leverage'))}</span><br><span style="font-size:10px;color:{SLATE};">Net Lev</span></div>
-                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">{format_pct(row.get('ltm_adj_ebitda_margin'))}</span><br><span style="font-size:10px;color:{SLATE};">EBITDA Mgn</span></div>
-                <div><span style="font-size:13px;font-weight:700;color:{'#06865C' if pd.notna(rev_yoy) and rev_yoy > 0 else RED_FLAG};">{format_pct(rev_yoy)}</span><br><span style="font-size:10px;color:{SLATE};">Rev Growth</span></div>
+            <div style="margin-top:10px; display:flex; gap:14px; flex-wrap:wrap;">
+                <div>
+                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
+                        {format_millions(row.get("ltm_revenue"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">LTM Rev</span>
+                </div>
+                <div>
+                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
+                        {format_multiple(row.get("net_leverage"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">Net Lev</span>
+                </div>
+                <div>
+                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
+                        {format_pct(row.get("ltm_adj_ebitda_margin"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">EBITDA Mgn</span>
+                </div>
+                <div>
+                    <span style="font-size:13px;font-weight:700;color:{rev_color};">
+                        {yoy_str}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">Rev Growth</span>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        company_name_val = row.get('company_name','')
-        if col.button(f"View Detail →", key=f"drill_{company_name_val}", use_container_width=True):
-            set_drill("overview", company=company_name_val)
+
+        # Two buttons: Company Detail and Flags
+        btn_c1, btn_c2 = col.columns(2)
+        if btn_c1.button("View Detail", key=f"detail_{cname}", use_container_width=True):
+            st.session_state["page"]         = "company_detail"
+            st.session_state["selected_company"] = cname
+            for k in ["drill_page", "drill_company", "drill_metric"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+        if btn_c2.button("Alerts", key=f"alerts_{cname}", use_container_width=True):
+            st.session_state["page"]              = "flags_alerts"
+            st.session_state["flag_filter_company"] = cname
             st.rerun()
 
 
@@ -468,10 +795,31 @@ def page_portfolio_overview():
 # ---------------------------------------------------------------------------
 
 def page_fund_summary():
-    render_header("Fund Summary")
+    render_page_header("Fund Summary")
 
     fs = load_fund_summary()
 
+    # Standardized KPI tiles — pending for fund-level metrics
+    fs_cols = st.columns(7)
+    total_tev = fs["current_tev"].sum() if not fs.empty else None
+    avg_lev   = fs["net_leverage"].mean() if not fs.empty else None
+    co_count  = len(fs) if not fs.empty else 0
+    fs_tiles  = [
+        (format_millions(total_tev),  "Total TEV",       "", SLATE,  False),
+        (str(co_count),               "Investments",     "", SLATE,  False),
+        (format_multiple(avg_lev),    "Avg Net Leverage","", SLATE,  False),
+        (None, "Gross MOIC",   "", SLATE, True),
+        (None, "Net MOIC",     "", SLATE, True),
+        (None, "Gross IRR",    "", SLATE, True),
+        (None, "Net IRR",      "", SLATE, True),
+    ]
+    for col, (val, label, delta, dclr, pending) in zip(fs_cols, fs_tiles):
+        if pending:
+            col.markdown(kpi_tile_pending(label), unsafe_allow_html=True)
+        else:
+            col.markdown(kpi_tile(val, label, delta, dclr), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-header">TSG9 Investment Summary</div>',
                 unsafe_allow_html=True)
 
@@ -563,7 +911,7 @@ def page_fund_summary():
 # ---------------------------------------------------------------------------
 
 def page_company_detail():
-    render_header("Company Detail")
+    render_page_header("Company Detail")
 
     companies = get_company_list()
     selected  = st.selectbox("Select Company", companies, label_visibility="collapsed")
@@ -749,34 +1097,73 @@ def page_company_detail():
 # ---------------------------------------------------------------------------
 
 def page_flags_alerts():
-    render_header("Flags & Alerts")
+    render_page_header("Flags & Alerts")
 
     flags = load_flags()
+    fs    = load_fund_summary()
 
-    red    = flags[flags["overall_flag"] == "Red"]
-    yellow = flags[flags["overall_flag"] == "Yellow"]
-    green  = flags[flags["overall_flag"] == "Green"]
+    # -----------------------------------------------------------------------
+    # FILTERS
+    # -----------------------------------------------------------------------
+    with st.expander("Filters", expanded=False):
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
 
-    # Summary counts
-    cols = st.columns(3)
-    cols[0].markdown(kpi_card(
-        f"🔴 {len(red)}",
-        "Red Flags",
-        "Requires immediate attention",
-        RED_FLAG
-    ), unsafe_allow_html=True)
-    cols[1].markdown(kpi_card(
-        f"🟡 {len(yellow)}",
-        "Yellow Flags",
-        "Watch — worsening trend",
-        "#B7860B"
-    ), unsafe_allow_html=True)
-    cols[2].markdown(kpi_card(
-        f"🟢 {len(green)}",
-        "Green — On Track",
-        "Within acceptable thresholds",
-        SEA_GREEN
-    ), unsafe_allow_html=True)
+        with fc1:
+            all_companies = sorted(flags["company_name"].dropna().unique().tolist())
+            # Pre-select from "Alerts" button on company card
+            pre_co = st.session_state.pop("flag_filter_company", None)
+            default_co = [pre_co] if pre_co and pre_co in all_companies else all_companies
+            sel_companies = st.multiselect("Company", all_companies, default=default_co)
+
+        with fc2:
+            all_sectors = sorted(fs["sector"].dropna().unique().tolist()) if not fs.empty else []
+            sel_sectors = st.multiselect("Sector", all_sectors, default=all_sectors)
+
+        with fc3:
+            if not fs.empty and "investment_date" in fs.columns:
+                fs["_inv_year"] = pd.to_datetime(fs["investment_date"], errors="coerce").dt.year
+                years = sorted(fs["_inv_year"].dropna().unique().astype(int).tolist())
+            else:
+                years = []
+            if years:
+                yr_range = st.slider("Acquisition Year",
+                                      min_value=int(min(years)), max_value=int(max(years)),
+                                      value=(int(min(years)), int(max(years))))
+            else:
+                yr_range = None
+
+        with fc4:
+            all_funds = sorted(fs["funds"].dropna().unique().tolist()) if not fs.empty and "funds" in fs.columns else []
+            sel_funds = st.multiselect("Fund", all_funds, default=all_funds)
+
+        with fc5:
+            metric_types = ["Leverage / Credit", "Coverage", "Revenue Growth",
+                             "EBITDA / Margin", "Returns", "Liquidity"]
+            sel_metrics = st.multiselect("Metric Type", metric_types, default=metric_types)
+
+    # Apply filters
+    flags_filtered = flags.copy()
+    if sel_companies:
+        flags_filtered = flags_filtered[flags_filtered["company_name"].isin(sel_companies)]
+    if sel_sectors and not fs.empty:
+        sector_companies = fs[fs["sector"].isin(sel_sectors)]["company_name"].tolist()
+        flags_filtered   = flags_filtered[flags_filtered["company_name"].isin(sector_companies)]
+    if yr_range and not fs.empty and "_inv_year" in fs.columns:
+        yr_companies = fs[fs["_inv_year"].between(yr_range[0], yr_range[1])]["company_name"].tolist()
+        flags_filtered = flags_filtered[flags_filtered["company_name"].isin(yr_companies)]
+    if sel_funds and not fs.empty and "funds" in fs.columns:
+        fund_companies = fs[fs["funds"].isin(sel_funds)]["company_name"].tolist()
+        flags_filtered = flags_filtered[flags_filtered["company_name"].isin(fund_companies)]
+
+    red    = flags_filtered[flags_filtered["overall_flag"] == "Red"]
+    yellow = flags_filtered[flags_filtered["overall_flag"] == "Yellow"]
+    green  = flags_filtered[flags_filtered["overall_flag"] == "Green"]
+
+    # Summary tiles
+    tile_c = st.columns(3)
+    tile_c[0].markdown(kpi_tile(str(len(red)),    "Red Flags",      "Requires attention"), unsafe_allow_html=True)
+    tile_c[1].markdown(kpi_tile(str(len(yellow)), "Yellow Flags",   "Watch list"),         unsafe_allow_html=True)
+    tile_c[2].markdown(kpi_tile(str(len(green)),  "Green / On Track","Within thresholds"),  unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -793,8 +1180,20 @@ def page_flags_alerts():
         st.markdown(f'<div class="section-header" style="color:{color};">{title}</div>',
                     unsafe_allow_html=True)
         for _, row in df.iterrows():
+            cname = row["company_name"]
+            # Get year acquired from fund summary
+            inv_year = "—"
+            if not fs.empty and "investment_date" in fs.columns:
+                fs_row = fs[fs["company_name"] == cname]
+                if not fs_row.empty:
+                    try:
+                        inv_year = str(pd.to_datetime(fs_row.iloc[0]["investment_date"]).year)
+                    except Exception:
+                        pass
+
             with st.expander(
-                f"{flag_emoji(row['overall_flag'])}  {row['company_name']}  |  "
+                f"{flag_emoji(row['overall_flag'])}  {cname}  |  "
+                f"Acq. {inv_year}  |  "
                 f"Net Lev: {format_multiple(row.get('net_leverage'))}  |  "
                 f"Rev Growth: {format_pct(row.get('revenue_yoy'))}  |  "
                 f"EBITDA Mgn: {format_pct(row.get('ltm_adj_ebitda_margin'))}"
@@ -806,57 +1205,92 @@ def page_flags_alerts():
                 c4.metric("Net Leverage",    format_multiple(row.get("net_leverage")))
                 c5.metric("Rev Growth YoY",  format_pct(row.get("revenue_yoy")))
 
-                # Flag breakdown
+                # Flag breakdown with colors
                 flag_cols = st.columns(4)
-                flag_cols[0].markdown(
-                    f"**Revenue Growth**<br>{flag_badge(row.get('revenue_growth_flag',''))}",
-                    unsafe_allow_html=True)
-                flag_cols[1].markdown(
-                    f"**EBITDA Margin**<br>{flag_badge(row.get('ebitda_margin_flag',''))}",
-                    unsafe_allow_html=True)
-                flag_cols[2].markdown(
-                    f"**Net Leverage**<br>{flag_badge(row.get('net_leverage_flag',''))}",
-                    unsafe_allow_html=True)
-                flag_cols[3].markdown(
-                    f"**Interest Coverage**<br>{flag_badge(row.get('interest_coverage_flag',''))}",
-                    unsafe_allow_html=True)
-                # Drill-down buttons for each flagged metric
-                st.markdown("**Drill into metric trend:**")
-                drill_btn_cols = st.columns(4)
+                for fc_label, fc_key in [
+                    ("Revenue Growth", "revenue_growth_flag"),
+                    ("EBITDA Margin",  "ebitda_margin_flag"),
+                    ("Net Leverage",   "net_leverage_flag"),
+                    ("Int. Coverage",  "interest_coverage_flag"),
+                ]:
+                    fval  = row.get(fc_key, "")
+                    fclr  = {"Red": RED_FLAG, "Yellow": XANTHOUS,
+                              "Green": SEA_GREEN}.get(fval, SLATE)
+                    flag_cols[["Revenue Growth","EBITDA Margin","Net Leverage","Int. Coverage"]
+                               .index(fc_label)].markdown(
+                        f"<div style='font-size:10px;color:{SLATE};'>{fc_label}</div>"
+                        f"<div style='font-size:13px;font-weight:700;color:{fclr};'>"
+                        f"{flag_emoji(fval)} {fval}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # Action buttons — drill into metric OR go to Company Detail
+                action_cols = st.columns(5)
+                if action_cols[0].button("View Company Detail",
+                                          key=f"goto_co_{cname}", use_container_width=True):
+                    st.session_state["page"]             = "company_detail"
+                    st.session_state["selected_company"] = cname
+                    st.rerun()
+
                 for metric_name, btn_col in zip(
                     ["Net Leverage", "EBITDA Margin", "Revenue Growth", "Gross Margin"],
-                    drill_btn_cols
+                    action_cols[1:]
                 ):
-                    if btn_col.button(metric_name, key=f"flag_drill_{row['company_name']}_{metric_name}", use_container_width=True):
-                        set_drill("flags", company=row["company_name"], metric=metric_name)
+                    if btn_col.button(metric_name, key=f"flag_drill_{cname}_{metric_name}",
+                                       use_container_width=True):
+                        set_drill("flags", company=cname, metric=metric_name)
                         st.rerun()
 
-    render_flag_section(red,    RED_FLAG,  "🔴 RED — Covenant or Material Breach")
-    render_flag_section(yellow, "#B7860B", "🟡 YELLOW — Watch List")
-    render_flag_section(green,  SEA_GREEN, "🟢 GREEN — Notable Outperformers")
+    render_flag_section(red,    RED_FLAG,  "RED — Covenant or Material Breach")
+    render_flag_section(yellow, "#B7860B", "YELLOW — Watch List")
+    render_flag_section(green,  SEA_GREEN, "GREEN — Notable Outperformers")
 
     # Benchmark scorecard
     st.markdown('<div class="section-header">Full KPI Benchmark Scorecard</div>',
                 unsafe_allow_html=True)
-    scorecard = flags[[
+    score_df = flags_filtered[[
         "company_name", "ltm_revenue", "revenue_yoy",
         "ltm_adj_ebitda_margin", "net_leverage",
         "interest_coverage", "overall_flag",
-        "revenue_growth_flag", "ebitda_margin_flag", "net_leverage_flag"
+        "revenue_growth_flag", "ebitda_margin_flag", "net_leverage_flag",
+        "interest_coverage_flag"
     ]].copy()
-    scorecard["ltm_revenue"]           = scorecard["ltm_revenue"].apply(format_millions)
-    scorecard["revenue_yoy"]           = scorecard["revenue_yoy"].apply(format_pct)
-    scorecard["ltm_adj_ebitda_margin"] = scorecard["ltm_adj_ebitda_margin"].apply(format_pct)
-    scorecard["net_leverage"]          = scorecard["net_leverage"].apply(format_multiple)
-    scorecard["interest_coverage"]     = scorecard["interest_coverage"].apply(format_multiple)
-    scorecard["overall_flag"]          = scorecard["overall_flag"].apply(
-        lambda x: f"{flag_emoji(x)} {x}")
-    scorecard.columns = [
+
+    def fmt_flag_cell(flag):
+        color = {"Red": RED_FLAG, "Yellow": "#B7860B",
+                 "Green": SEA_GREEN}.get(flag, SLATE)
+        emoji = flag_emoji(flag) if flag else "⚪"
+        return f"{emoji} {flag}" if flag else "—"
+
+    score_df["ltm_revenue"]           = score_df["ltm_revenue"].apply(format_millions)
+    score_df["revenue_yoy"]           = score_df["revenue_yoy"].apply(format_pct)
+    score_df["ltm_adj_ebitda_margin"] = score_df["ltm_adj_ebitda_margin"].apply(format_pct)
+    score_df["net_leverage"]          = score_df["net_leverage"].apply(format_multiple)
+    score_df["interest_coverage"]     = score_df["interest_coverage"].apply(format_multiple)
+    score_df["overall_flag"]          = score_df["overall_flag"].apply(fmt_flag_cell)
+    score_df["revenue_growth_flag"]   = score_df["revenue_growth_flag"].apply(fmt_flag_cell)
+    score_df["ebitda_margin_flag"]    = score_df["ebitda_margin_flag"].apply(fmt_flag_cell)
+    score_df["net_leverage_flag"]     = score_df["net_leverage_flag"].apply(fmt_flag_cell)
+    score_df["interest_coverage_flag"]= score_df["interest_coverage_flag"].apply(fmt_flag_cell)
+    score_df.columns = [
         "Company", "LTM Revenue", "Rev Growth", "EBITDA Margin",
         "Net Leverage", "Int. Coverage", "Overall",
-        "Rev Flag", "Margin Flag", "Lev Flag"
+        "Rev Flag", "Margin Flag", "Lev Flag", "Cov Flag"
     ]
-    st.dataframe(scorecard.set_index("Company"), use_container_width=True)
+
+    # Colour-map the flag columns using Pandas Styler
+    def color_flag(val):
+        if "Red"    in str(val): return f"color: {RED_FLAG}; font-weight: 700"
+        if "Yellow" in str(val): return f"color: #B7860B; font-weight: 700"
+        if "Green"  in str(val): return f"color: {SEA_GREEN}; font-weight: 700"
+        return ""
+
+    flag_cols_to_style = ["Overall", "Rev Flag", "Margin Flag", "Lev Flag", "Cov Flag"]
+    styled = (score_df.set_index("Company")
+                      .style.applymap(color_flag, subset=flag_cols_to_style))
+    st.dataframe(styled, use_container_width=True, height=500)
 
 
 # ---------------------------------------------------------------------------
@@ -864,7 +1298,7 @@ def page_flags_alerts():
 # ---------------------------------------------------------------------------
 
 def page_portfolio_ai():
-    render_header("Portfolio AI Analyst")
+    render_page_header("Portfolio AI Analyst")
 
     st.markdown("""
     <div style="background:white; border:1px solid #E0E4EA; border-radius:6px;
@@ -923,70 +1357,6 @@ def page_portfolio_ai():
 
 
 # ---------------------------------------------------------------------------
-# Sidebar navigation
-# ---------------------------------------------------------------------------
-
-def render_sidebar():
-    with st.sidebar:
-        st.markdown(f"""
-        <div style="text-align:center; padding:20px 0 10px 0;">
-            <p style="font-size:18px; font-weight:700; color:white;
-                      font-family:Arial; margin:0;">
-                TSG <span style="color:{SKY};">CONSUMER</span>
-            </p>
-            <p style="font-size:10px; color:{SKY}; margin:4px 0 0 0; font-family:Arial;">
-                Portfolio Analytics
-            </p>
-        </div>
-        <hr style="border-color:rgba(255,255,255,0.15); margin:10px 0;">
-        """, unsafe_allow_html=True)
-
-        page = st.radio(
-            "Navigation",
-            ["📊 Portfolio Overview",
-             "📋 Fund Summary",
-             "🏢 Company Detail",
-             "🚨 Flags & Alerts",
-             "📈 Consumer KPIs",
-             "🤖 AI Analyst",
-             "🚦 Portfolio Flags",
-             "📤 Export to PPT"],
-            label_visibility="collapsed"
-        )
-
-        st.markdown("<hr style='border-color:rgba(255,255,255,0.15); margin:20px 0;'>",
-                    unsafe_allow_html=True)
-
-        # Last refresh
-        try:
-            from sqlalchemy import text as sql_text
-            with get_engine().connect() as conn:
-                row = conn.execute(sql_text("""
-                    SELECT TOP 1 finished_at, pipeline_name
-                    FROM dbo.ts_pipeline_runs
-                    WHERE status = 'SUCCESS'
-                    ORDER BY finished_at DESC
-                """)).fetchone()
-                if row:
-                    st.markdown(f"""
-                    <p style="font-size:10px; color:{SKY}; font-family:Arial; margin:0;">
-                        DATA AS OF<br>
-                        <span style="color:white; font-weight:600;">
-                            {str(row[0])[:16] if row[0] else 'Unknown'}
-                        </span>
-                    </p>
-                    """, unsafe_allow_html=True)
-        except Exception:
-            pass
-
-        if st.button("Sign Out", use_container_width=True):
-            st.session_state.authenticated = False
-            st.rerun()
-
-    return page
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -994,46 +1364,41 @@ def main():
     if not check_password():
         return
 
-    # Pre-warm cache on startup
+    # Pre-warm cache
     load_portfolio_overview()
     load_fund_summary()
     load_flags()
     load_ltm_snapshot()
     load_company_master()
 
-    page = render_sidebar()
+    # Initialise page state
+    if "page" not in st.session_state:
+        st.session_state["page"] = "portfolio_overview"
 
-    if page == "📊 Portfolio Overview":
-        import os
-        from pathlib import Path
-        here = Path(__file__).parent
-        files = sorted([f.name for f in here.iterdir() if not f.name.startswith(".")])
-        csvs  = [f for f in files if f.endswith(".csv")]
-        if not csvs:
-            st.error("No CSV files found in app directory.")
-            st.write(f"**App location:** `{here}`")
-            st.write(f"**Working dir:** `{os.getcwd()}`")
-            st.write(f"**All files visible:**")
-            st.code("\n".join(files))
-            st.stop()
+    # Render top nav bar
+    render_top_nav()
+
+    # Route to current page
+    page = st.session_state.get("page", "portfolio_overview")
+
+    if page == "portfolio_overview":
         page_portfolio_overview()
-    elif page == "📋 Fund Summary":
+    elif page == "fund_summary":
         page_fund_summary()
-    elif page == "🏢 Company Detail":
+    elif page == "company_detail":
         from pages_extra import page_company_detail_enhanced
         page_company_detail_enhanced()
-    elif page == "🚨 Flags & Alerts":
+    elif page == "flags_alerts":
         page_flags_alerts()
-    elif page == "📈 Consumer KPIs":
+    elif page == "consumer_kpis":
         from pages_extra import page_consumer_kpis
         page_consumer_kpis()
-    elif page == "🤖 AI Analyst":
-        from ai import build_portfolio_context_with_news
-        page_portfolio_ai()
-    elif page == "🚦 Portfolio Flags":
+    elif page == "portfolio_flags":
         from page_portfolio_flags import page_portfolio_flags
         page_portfolio_flags()
-    elif page == "📤 Export to PPT":
+    elif page == "ai_analyst":
+        page_portfolio_ai()
+    elif page == "export_ppt":
         from export_ppt import page_export
         page_export()
 
