@@ -257,7 +257,8 @@ def check_password() -> bool:
         login_btn = st.button("Sign In", use_container_width=True, type="primary")
 
         if login_btn:
-            if password == st.secrets["auth"]["password"]:
+            from db import get_secret
+            if password == get_secret("password", "auth"):
                 st.session_state.authenticated = True
                 st.rerun()
             else:
@@ -313,7 +314,12 @@ def page_portfolio_overview():
             return
     render_header("Portfolio Overview")
 
-    overview = load_portfolio_overview().iloc[0]
+    _ov_df = load_portfolio_overview()
+    if _ov_df.empty:
+        st.error("Portfolio overview data not loaded. Check that CSV files are in the `data/` folder.")
+        st.info(f"Looking for data in: `{__import__('pathlib').Path(__file__).parent / 'data'}`")
+        st.stop()
+    overview = _ov_df.iloc[0]
     flags    = load_flags()
     ltm      = load_ltm_snapshot()
     fs       = load_fund_summary()
@@ -998,6 +1004,18 @@ def main():
     page = render_sidebar()
 
     if page == "📊 Portfolio Overview":
+        import os
+        from pathlib import Path
+        here = Path(__file__).parent
+        files = sorted([f.name for f in here.iterdir() if not f.name.startswith(".")])
+        csvs  = [f for f in files if f.endswith(".csv")]
+        if not csvs:
+            st.error("No CSV files found in app directory.")
+            st.write(f"**App location:** `{here}`")
+            st.write(f"**Working dir:** `{os.getcwd()}`")
+            st.write(f"**All files visible:**")
+            st.code("\n".join(files))
+            st.stop()
         page_portfolio_overview()
     elif page == "📋 Fund Summary":
         page_fund_summary()
