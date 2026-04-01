@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parent
 
 
 def _csv(filename: str) -> pd.DataFrame:
