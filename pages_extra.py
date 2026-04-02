@@ -300,14 +300,29 @@ def page_company_detail_enhanced():
     from ui import render_page_header
     render_page_header("Company Detail")
 
-    companies  = get_company_list()
+    companies = get_company_list()
+    if not companies:
+        st.info("No company data available.")
+        return
+
     # Pre-select from session state (set by "View Detail" button on Portfolio Overview)
-    default_company = st.session_state.get("selected_company", companies[0] if companies else None)
-    default_idx     = companies.index(default_company) if default_company in companies else 0
-    selected   = st.selectbox("Select Company", companies,
-                               index=default_idx, label_visibility="collapsed")
-    # Update session state so it persists
-    st.session_state["selected_company"] = selected
+    # Important: read once and don't overwrite on every render — only update when
+    # the selectbox itself changes, not on every rerun
+    default_company = st.session_state.get("selected_company", companies[0])
+    if default_company not in companies:
+        default_company = companies[0]
+    default_idx = companies.index(default_company)
+
+    selected = st.selectbox(
+        "Select Company", companies,
+        index=default_idx,
+        label_visibility="collapsed",
+        key="company_detail_select"
+    )
+
+    # Only update session state when user explicitly changes the selectbox
+    if selected != st.session_state.get("selected_company"):
+        st.session_state["selected_company"] = selected
 
     if not selected:
         return
@@ -372,7 +387,7 @@ def page_company_detail_enhanced():
 
     # Sub-tabs within company detail
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📈 Financials", "📋 Income Statement", "🚦 Credit Flags", "📰 News", "🤖 AI Analyst", "ℹ️ Overview"
+        "Financials", "Income Statement", "Alerts", "News", "AI Analyst", "Overview"
     ])
 
     with tab1:

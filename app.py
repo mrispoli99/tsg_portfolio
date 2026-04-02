@@ -514,27 +514,28 @@ def render_top_nav():
     </style>
     """, unsafe_allow_html=True)
 
-    # Force the radio widget to reflect the current page state.
-    # This prevents the radio from overwriting page changes made by
-    # buttons (e.g. "View Detail", "Alerts") during a rerun.
+    # Sync radio to current page BEFORE rendering so it always
+    # reflects what session_state["page"] says, not its own cached state.
     correct_index = labels.index(current_label) if current_label in labels else 0
-    st.session_state["nav_radio"] = labels[correct_index]
+    # Pre-set the radio widget value to match current page
+    st.session_state["_nav_radio_value"] = labels[correct_index]
 
     selected_label = st.radio(
         "nav", labels,
         index=correct_index,
         horizontal=True,
         label_visibility="collapsed",
-        key="nav_radio"
+        key="_nav_radio_value"
     )
 
-    # Only navigate if the user actually clicked a tab
-    # (not a button-triggered rerun where the page was already set)
+    # Navigate only when user clicks a different tab
     selected_key = keys[labels.index(selected_label)] if selected_label in labels else keys[0]
     if selected_key != current:
         st.session_state["page"] = selected_key
-        for k in ["drill_page", "drill_company", "drill_metric",
-                  "selected_company", "flag_filter_company"]:
+        # Only clear company selection when explicitly navigating away from company detail
+        if selected_key != "company_detail":
+            st.session_state.pop("selected_company", None)
+        for k in ["drill_page", "drill_company", "drill_metric", "flag_filter_company"]:
             st.session_state.pop(k, None)
         st.rerun()
 
