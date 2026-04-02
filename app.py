@@ -813,115 +813,372 @@ def page_portfolio_overview():
 # ---------------------------------------------------------------------------
 
 def page_fund_summary():
-    render_page_header("Fund Summary")
+    render_page_header("Fund Snapshot")
 
     fs = load_fund_summary()
 
-    # Standardized KPI tiles — pending for fund-level metrics
-    fs_cols = st.columns(7)
-    total_tev = fs["current_tev"].sum() if not fs.empty else None
-    avg_lev   = fs["net_leverage"].mean() if not fs.empty else None
-    co_count  = len(fs) if not fs.empty else 0
-    fs_tiles  = [
-        (format_millions(total_tev),  "Total TEV",       "", SLATE,  False),
-        (str(co_count),               "Investments",     "", SLATE,  False),
-        (format_multiple(avg_lev),    "Avg Net Leverage","", SLATE,  False),
-        (None, "Gross MOIC",   "", SLATE, True),
-        (None, "Net MOIC",     "", SLATE, True),
-        (None, "Gross IRR",    "", SLATE, True),
-        (None, "Net IRR",      "", SLATE, True),
+    if fs.empty:
+        st.info("No fund data available.")
+        return
+
+    # -----------------------------------------------------------------------
+    # FILTERS
+    # -----------------------------------------------------------------------
+    with st.expander("Filters", expanded=False):
+        ff1, ff2, ff3 = st.columns(3)
+        with ff1:
+            sectors = sorted(fs["sector"].dropna().unique().tolist())
+            sel_sectors = st.multiselect("Sector", sectors, default=sectors,
+                                          key="fs_sector")
+        with ff2:
+            fs["_inv_year"] = pd.to_datetime(fs["investment_date"], errors="coerce").dt.year
+            years = sorted(fs["_inv_year"].dropna().unique().astype(int).tolist())
+            yr_range = st.slider("Acquisition Year",
+                                  min_value=int(min(years)) if years else 2018,
+                                  max_value=int(max(years)) if years else 2024,
+                                  value=(int(min(years)) if years else 2018,
+                                         int(max(years)) if years else 2024),
+                                  key="fs_year") if years else None
+        with ff3:
+            funds = sorted(fs["funds"].dropna().unique().tolist()) if "funds" in fs.columns else []
+            sel_funds = st.multiselect("Fund", funds, default=funds, key="fs_fund") if funds else funds
+
+    # Apply filters
+    fs_f = fs.copy()
+    if sel_sectors:
+        fs_f = fs_f[fs_f["sector"].isin(sel_sectors)]
+    if yr_range:
+        fs_f = fs_f[fs_f["_inv_year"].between(yr_range[0], yr_range[1])]
+    if sel_funds and "funds" in fs_f.columns:
+        fs_f = fs_f[fs_f["funds"].isin(sel_funds)]
+
+    # -----------------------------------------------------------------------
+    # KPI TILES
+    # -----------------------------------------------------------------------
+    total_tev  = fs_f["current_tev"].sum()   if not fs_f.empty else None
+    entry_tev  = fs_f["entry_tev"].sum()     if not fs_f.empty else None
+    avg_lev    = (fs_f["net_leverage"] * fs_f["current_tev"]).sum() /                  fs_f["current_tev"].sum() if not fs_f.empty and fs_f["current_tev"].sum() > 0 else None
+    co_count   = len(fs_f)
+
+    t_cols = st.columns(7)
+    tiles  = [
+        (str(co_count),               "Investments",      False),
+        (format_millions(entry_tev),  "Total Cost",       False),
+        (format_millions(total_tev),  "Total TEV",        False),
+        (format_multiple(avg_lev),    "Avg Net Leverage", False),
+        ("Gross MOIC",                "Gross MOIC",       True),
+        ("Gross IRR",                 "Gross IRR",        True),
+        ("Net IRR",                   "Net IRR",          True),
     ]
-    for col, (val, label, delta, dclr, pending) in zip(fs_cols, fs_tiles):
+    for col, (val, label, pending) in zip(t_cols, tiles):
         if pending:
             col.markdown(kpi_tile_pending(label), unsafe_allow_html=True)
         else:
-            col.markdown(kpi_tile(val, label, delta, dclr), unsafe_allow_html=True)
+            col.markdown(kpi_tile(val, label), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="section-header">TSG9 Investment Summary</div>',
-                unsafe_allow_html=True)
 
-    # Format for display
-    display = fs[[
-        "company_name", "sector", "investment_date", "security_type",
-        "ownership_structure", "entry_tev", "current_tev", "gross_moi",
-        "ltm_revenue", "ltm_adj_ebitda", "ltm_adj_ebitda_margin",
-        "net_leverage", "revenue_yoy", "overall_flag"
-    ]].copy()
+    # -----------------------------------------------------------------------
+    # TABS
+    # -----------------------------------------------------------------------
+    tab_invest, tab_perf, tab_charts = st.tabs([
+        "Investment Summary", "Performance Charts", "Entry vs Current"
+    ])
 
-    display["investment_date"] = pd.to_datetime(display["investment_date"]).dt.strftime("%b %Y")
-    display["entry_tev"]   = display["entry_tev"].apply(lambda x: format_millions(x))
-    display["current_tev"] = display["current_tev"].apply(lambda x: format_millions(x))
-    display["gross_moi"]   = display["gross_moi"].apply(lambda x: format_multiple(x))
-    display["ltm_revenue"] = display["ltm_revenue"].apply(lambda x: format_millions(x))
-    display["ltm_adj_ebitda"] = display["ltm_adj_ebitda"].apply(lambda x: format_millions(x))
-    display["ltm_adj_ebitda_margin"] = display["ltm_adj_ebitda_margin"].apply(lambda x: format_pct(x))
-    display["net_leverage"] = display["net_leverage"].apply(lambda x: format_multiple(x))
-    display["revenue_yoy"]  = display["revenue_yoy"].apply(lambda x: format_pct(x))
-    display["overall_flag"] = display["overall_flag"].apply(lambda x: f"{flag_emoji(x)} {x}")
+    # ---- TAB 1: Investment Summary table ----
+    with tab_invest:
+        st.markdown('<div class="section-header">TSG Investment Summary</div>',
+                    unsafe_allow_html=True)
 
-    display.columns = [
-        "Company", "Sector", "Entry", "Security", "Ownership",
-        "Entry TEV", "Current TEV", "Gross MOI",
-        "LTM Revenue", "LTM EBITDA", "EBITDA Mgn",
-        "Net Lev", "Rev Growth", "Flag"
-    ]
+        display = fs_f[[
+            "company_name", "sector", "investment_date", "security_type",
+            "ownership_structure", "entry_tev", "current_tev", "gross_moi",
+            "ltm_revenue", "ltm_adj_ebitda", "ltm_adj_ebitda_margin",
+            "net_leverage", "revenue_yoy", "overall_flag"
+        ]].copy()
+        display["investment_date"]       = pd.to_datetime(display["investment_date"]).dt.strftime("%b %Y")
+        display["entry_tev"]             = display["entry_tev"].apply(format_millions)
+        display["current_tev"]           = display["current_tev"].apply(format_millions)
+        display["gross_moi"]             = display["gross_moi"].apply(format_multiple)
+        display["ltm_revenue"]           = display["ltm_revenue"].apply(format_millions)
+        display["ltm_adj_ebitda"]        = display["ltm_adj_ebitda"].apply(format_millions)
+        display["ltm_adj_ebitda_margin"] = display["ltm_adj_ebitda_margin"].apply(format_pct)
+        display["net_leverage"]          = display["net_leverage"].apply(format_multiple)
+        display["revenue_yoy"]           = display["revenue_yoy"].apply(format_pct)
+        display["overall_flag"]          = display["overall_flag"].apply(
+            lambda x: f"{flag_emoji(x)} {x}")
+        display.columns = [
+            "Company", "Sector", "Entry Date", "Security", "Ownership",
+            "Entry TEV", "Current TEV", "Gross MOI",
+            "LTM Revenue", "LTM EBITDA", "EBITDA Mgn",
+            "Net Lev", "Rev Growth", "Flag"
+        ]
+        st.dataframe(display.set_index("Company"), use_container_width=True, height=500)
 
-    # Drill-down check
-    if has_drill():
-        d = get_drill()
-        if d["page"] == "fund_summary" and d["company"]:
-            drill_tev_history(d["company"])
-            return
+        # Drill-down check
+        if has_drill():
+            d = get_drill()
+            if d["page"] == "fund_summary" and d["company"]:
+                drill_tev_history(d["company"])
+                return
 
-    st.dataframe(
-        display.set_index("Company"),
-        use_container_width=True,
-        height=600,
-    )
-    st.caption("Click a company name below to drill into TEV & Valuation history:")
-    raw2 = load_fund_summary()
-    drill_cols = st.columns(5)
-    for i, (_, row) in enumerate(raw2.iterrows()):
-        if drill_cols[i % 5].button(row["company_name"], key=f"fs_drill_{row['company_name']}", use_container_width=True):
-            set_drill("fund_summary", company=row["company_name"])
-            st.rerun()
+        st.caption("Drill into TEV & valuation history:")
+        drill_cols = st.columns(5)
+        for i, (_, row) in enumerate(fs_f.iterrows()):
+            cname = row["company_name"]
+            if drill_cols[i % 5].button(cname, key=f"fs_drill_{cname}",
+                                         use_container_width=True):
+                set_drill("fund_summary", company=cname)
+                st.rerun()
 
-    # Scatter: Gross IRR vs MOI (using revenue growth as proxy)
-    st.markdown('<div class="section-header">Current TEV vs EBITDA Margin</div>',
-                unsafe_allow_html=True)
-    raw = load_fund_summary()
-    plot_df = raw.dropna(subset=["current_tev", "ltm_adj_ebitda_margin", "net_leverage"])
+    # ---- TAB 2: Performance Charts ----
+    with tab_perf:
+        # -- Capital Flow Bridge (pending Investran) --
+        st.markdown('<div class="section-header">Capital Flow Bridge</div>',
+                    unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:32px; text-align:center; margin-bottom:16px;">
+            <div style="font-size:15px; font-weight:700; color:#999; font-family:Arial;">
+                Capital Committed → Paid-In Capital → Distributions → Remaining NAV
+            </div>
+            <div style="font-size:11px; color:#BBBBBB; font-family:Arial; margin-top:8px;">
+                ** Pending Investran data — Waterfall chart will render here
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if not plot_df.empty:
-        plot_df["flag_color"] = plot_df["overall_flag"].map(
-            {"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN}
-        ).fillna(SLATE)
-        fig = px.scatter(
-            plot_df,
-            x="ltm_adj_ebitda_margin",
-            y="current_tev",
-            size="ltm_revenue",
-            color="overall_flag",
-            color_discrete_map={"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN},
-            hover_name="company_name",
-            text="company_name",
-            labels={
-                "ltm_adj_ebitda_margin": "LTM EBITDA Margin",
-                "current_tev": "Current TEV ($M)",
-                "overall_flag": "Flag"
-            },
-            size_max=50,
-        )
-        fig.update_traces(textposition="top center", textfont_size=9)
-        fig.update_layout(
-            height=380, plot_bgcolor="white", paper_bgcolor="white",
-            font=dict(family="Arial", color=NAVY, size=10),
-            margin=dict(l=0, r=0, t=10, b=0),
-            xaxis=dict(tickformat=".0%", gridcolor=BORDER),
-            yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # -- TVPI / DPI / RVPI (pending Investran) --
+        st.markdown('<div class="section-header">TVPI, DPI, RVPI Over Time</div>',
+                    unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:32px; text-align:center; margin-bottom:16px;">
+            <div style="font-size:15px; font-weight:700; color:#999; font-family:Arial;">
+                TVPI · DPI · RVPI — Time Series
+            </div>
+            <div style="font-size:11px; color:#BBBBBB; font-family:Arial; margin-top:8px;">
+                ** Pending Investran data — Line chart will render here
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # -- Value & MOIC by Investment (built from available data) --
+        chart_left, chart_right = st.columns(2)
+
+        with chart_left:
+            st.markdown('<div class="section-header">Current TEV by Company</div>',
+                        unsafe_allow_html=True)
+            tev_df = fs_f.dropna(subset=["current_tev"]).sort_values("current_tev", ascending=True)
+            if not tev_df.empty:
+                fig_tev = go.Figure(go.Bar(
+                    x=tev_df["current_tev"],
+                    y=tev_df["company_name"],
+                    orientation="h",
+                    marker_color=NAVY,
+                    text=tev_df["current_tev"].apply(format_millions),
+                    textposition="outside"
+                ))
+                fig_tev.update_layout(
+                    height=max(300, len(tev_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=60, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat="$,.0f", gridcolor=BORDER)
+                )
+                st.plotly_chart(fig_tev, use_container_width=True)
+
+        with chart_right:
+            st.markdown('<div class="section-header">Gross MOI by Company</div>',
+                        unsafe_allow_html=True)
+            moi_df = fs_f.dropna(subset=["gross_moi"]).sort_values("gross_moi", ascending=True)
+            if not moi_df.empty:
+                moi_df["color"] = moi_df["gross_moi"].apply(
+                    lambda x: SEA_GREEN if x > 2.0 else XANTHOUS if x > 1.5 else RED_FLAG
+                )
+                fig_moi = go.Figure(go.Bar(
+                    x=moi_df["gross_moi"],
+                    y=moi_df["company_name"],
+                    orientation="h",
+                    marker_color=moi_df["color"].tolist(),
+                    text=moi_df["gross_moi"].apply(lambda x: f"{x:.2f}x"),
+                    textposition="outside"
+                ))
+                fig_moi.add_vline(x=1.0, line_dash="dash", line_color=RED_FLAG,
+                                   annotation_text="1.0x")
+                fig_moi.add_vline(x=2.0, line_dash="dot",  line_color=SEA_GREEN,
+                                   annotation_text="2.0x")
+                fig_moi.update_layout(
+                    height=max(300, len(moi_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=60, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=".2f", gridcolor=BORDER)
+                )
+                st.plotly_chart(fig_moi, use_container_width=True)
+
+        # -- Invested Capital (pending) --
+        st.markdown('<div class="section-header">Invested Capital by Company (Cost Basis)</div>',
+                    unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:24px; text-align:center;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;">
+                Invested Capital / Cost Basis
+            </div>
+            <div style="font-size:11px; color:#BBBBBB; font-family:Arial; margin-top:6px;">
+                ** Pending Investran data
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # -- TEV vs EBITDA Margin scatter --
+        st.markdown('<div class="section-header">TEV vs EBITDA Margin</div>',
+                    unsafe_allow_html=True)
+        scatter_df = fs_f.dropna(subset=["current_tev", "ltm_adj_ebitda_margin"])
+        if not scatter_df.empty:
+            fig_sc = px.scatter(
+                scatter_df,
+                x="ltm_adj_ebitda_margin", y="current_tev",
+                size="ltm_revenue", color="overall_flag",
+                color_discrete_map={"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN},
+                hover_name="company_name", text="company_name",
+                size_max=50,
+                labels={"ltm_adj_ebitda_margin": "LTM EBITDA Margin",
+                        "current_tev": "Current TEV ($M)", "overall_flag": "Flag"}
+            )
+            fig_sc.update_traces(textposition="top center", textfont_size=9)
+            fig_sc.update_layout(
+                height=380, plot_bgcolor="white", paper_bgcolor="white",
+                font=dict(family="Arial", color=NAVY, size=10),
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=dict(tickformat=".0%", gridcolor=BORDER),
+                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+            )
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+    # ---- TAB 3: Entry vs Current ----
+    with tab_charts:
+        st.markdown('<div class="section-header">Entry vs Current EBITDA — Company Level</div>',
+                    unsafe_allow_html=True)
+
+        entry_df = fs_f.dropna(subset=["entry_tev", "current_tev"]).copy()
+        if not entry_df.empty:
+            # Use entry EBITDA proxy: entry_tev / assumed entry multiple
+            # and current EBITDA from LTM
+            ebitda_df = entry_df.dropna(subset=["ltm_adj_ebitda"]).copy()
+            ebitda_df = ebitda_df.sort_values("ltm_adj_ebitda", ascending=True)
+
+            fig_entry = go.Figure()
+            # Current EBITDA
+            fig_entry.add_trace(go.Bar(
+                name="LTM Adj. EBITDA",
+                x=ebitda_df["company_name"],
+                y=ebitda_df["ltm_adj_ebitda"],
+                marker_color=NAVY
+            ))
+            # Entry EBITDA proxy (if valuation_ltm_ebitda available)
+            if "valuation_ltm_ebitda" in ebitda_df.columns:
+                entry_ebitda = ebitda_df["valuation_ltm_ebitda"].dropna()
+                if not entry_ebitda.empty:
+                    fig_entry.add_trace(go.Bar(
+                        name="Entry EBITDA (Proxy)",
+                        x=ebitda_df["company_name"],
+                        y=ebitda_df["valuation_ltm_ebitda"],
+                        marker_color=SKY
+                    ))
+            fig_entry.update_layout(
+                height=360, plot_bgcolor="white", paper_bgcolor="white",
+                barmode="group",
+                margin=dict(l=0, r=0, t=10, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                legend=dict(orientation="h", y=-0.15),
+                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                xaxis=dict(tickangle=-30)
+            )
+            st.plotly_chart(fig_entry, use_container_width=True)
+
+        # Entry vs Current TEV (Debt proxy)
+        st.markdown('<div class="section-header">Entry vs Current TEV — Company Level</div>',
+                    unsafe_allow_html=True)
+        tev_comp_df = fs_f.dropna(subset=["entry_tev", "current_tev"]).sort_values(
+            "current_tev", ascending=True)
+        if not tev_comp_df.empty:
+            fig_tev2 = go.Figure()
+            fig_tev2.add_trace(go.Bar(
+                name="Entry TEV",
+                x=tev_comp_df["company_name"],
+                y=tev_comp_df["entry_tev"],
+                marker_color=SKY
+            ))
+            fig_tev2.add_trace(go.Bar(
+                name="Current TEV",
+                x=tev_comp_df["company_name"],
+                y=tev_comp_df["current_tev"],
+                marker_color=NAVY
+            ))
+            fig_tev2.update_layout(
+                height=360, plot_bgcolor="white", paper_bgcolor="white",
+                barmode="group",
+                margin=dict(l=0, r=0, t=10, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                legend=dict(orientation="h", y=-0.15),
+                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                xaxis=dict(tickangle=-30)
+            )
+            st.plotly_chart(fig_tev2, use_container_width=True)
+
+        # Net Leverage: Entry vs Current (fund-level pending)
+        st.markdown('<div class="section-header">Entry vs Current Debt — Fund Level</div>',
+                    unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:24px; text-align:center;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;">
+                Fund-Level Debt: Entry vs Current
+            </div>
+            <div style="font-size:11px; color:#BBBBBB; font-family:Arial; margin-top:6px;">
+                ** Pending Investran data — requires paid-in capital and debt at entry
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Net Leverage trend by company (available from quarterly data)
+        st.markdown('<div class="section-header">Net Leverage Over Time — Company Level</div>',
+                    unsafe_allow_html=True)
+        quarterly_all = load_quarterly()
+        if not quarterly_all.empty:
+            lev_df = quarterly_all[
+                quarterly_all["company_name"].isin(fs_f["company_name"])
+            ].dropna(subset=["net_leverage"]).copy()
+            lev_df = lev_df.sort_values("cash_flow_date")
+
+            company_colors_map = {
+                name: COMPANY_COLORS[i % len(COMPANY_COLORS)]
+                for i, name in enumerate(sorted(lev_df["company_name"].unique()))
+            }
+            fig_lev = go.Figure()
+            for cname in lev_df["company_name"].unique():
+                co_df = lev_df[lev_df["company_name"] == cname]
+                fig_lev.add_trace(go.Scatter(
+                    x=co_df["period_label"], y=co_df["net_leverage"],
+                    name=cname, mode="lines+markers",
+                    line=dict(color=company_colors_map.get(cname, NAVY), width=1.5),
+                    marker=dict(size=4)
+                ))
+            fig_lev.add_hline(y=6.0, line_dash="dash", line_color=RED_FLAG,
+                               annotation_text="6.0x Covenant")
+            fig_lev.add_hline(y=5.0, line_dash="dot",  line_color=XANTHOUS,
+                               annotation_text="5.0x Watch")
+            fig_lev.update_layout(
+                height=380, plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=80, t=10, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                legend=dict(font=dict(size=9), orientation="h", y=-0.2),
+                yaxis=dict(tickformat=".1f", ticksuffix="x", gridcolor=BORDER),
+                xaxis=dict(tickangle=-45)
+            )
+            st.plotly_chart(fig_lev, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
