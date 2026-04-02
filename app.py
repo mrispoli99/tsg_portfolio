@@ -588,32 +588,41 @@ def page_portfolio_overview():
     # FILTERS
     # -----------------------------------------------------------------------
     with st.expander("Filters", expanded=False):
-        f_col1, f_col2 = st.columns(2)
-        with f_col1:
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        with fc1:
+            all_cos = sorted(fs["company_name"].dropna().unique().tolist()) if not fs.empty else []
+            sel_companies_po = st.multiselect("Portfolio Company", all_cos,
+                                               default=all_cos, key="po_company")
+        with fc2:
             sectors = sorted(fs["sector"].dropna().unique().tolist()) if not fs.empty else []
-            sel_sectors = st.multiselect("Sector", sectors, default=sectors,
-                                          label_visibility="visible")
-        with f_col2:
+            sel_sectors = st.multiselect("Sector", sectors, default=sectors, key="po_sector")
+        with fc3:
             if not fs.empty and "investment_date" in fs.columns:
                 fs["_inv_year"] = pd.to_datetime(fs["investment_date"], errors="coerce").dt.year
                 years = sorted(fs["_inv_year"].dropna().unique().astype(int).tolist())
             else:
                 years = []
-            if years:
-                yr_range = st.slider("Acquisition Year", min_value=int(min(years)),
-                                      max_value=int(max(years)),
-                                      value=(int(min(years)), int(max(years))))
-            else:
-                yr_range = None
+            yr_range = st.slider("Acquisition Year",
+                                  min_value=int(min(years)) if years else 2018,
+                                  max_value=int(max(years)) if years else 2024,
+                                  value=(int(min(years)) if years else 2018,
+                                         int(max(years)) if years else 2024),
+                                  key="po_year") if years else None
+        with fc4:
+            po_funds = sorted(fs["funds"].dropna().unique().tolist())                        if not fs.empty and "funds" in fs.columns else []
+            sel_funds_po = st.multiselect("Fund", po_funds, default=po_funds,
+                                           key="po_fund") if po_funds else []
 
     # Apply filters
     fs_filtered = fs.copy()
+    if sel_companies_po:
+        fs_filtered = fs_filtered[fs_filtered["company_name"].isin(sel_companies_po)]
     if sel_sectors:
         fs_filtered = fs_filtered[fs_filtered["sector"].isin(sel_sectors)]
     if yr_range and "_inv_year" in fs_filtered.columns:
-        fs_filtered = fs_filtered[
-            fs_filtered["_inv_year"].between(yr_range[0], yr_range[1])
-        ]
+        fs_filtered = fs_filtered[fs_filtered["_inv_year"].between(yr_range[0], yr_range[1])]
+    if sel_funds_po and "funds" in fs_filtered.columns:
+        fs_filtered = fs_filtered[fs_filtered["funds"].isin(sel_funds_po)]
 
     # Recompute overview metrics from filtered set
     total_tev      = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
@@ -1429,6 +1438,21 @@ def page_flags_alerts():
     if sel_funds and not fs.empty and "funds" in fs.columns:
         fund_companies = fs[fs["funds"].isin(sel_funds)]["company_name"].tolist()
         flags_filtered = flags_filtered[flags_filtered["company_name"].isin(fund_companies)]
+
+    # Metric Type maps to which KPI flags to show in the expanders
+    # (used in render_flag_section to filter visible metric rows)
+    METRIC_TYPE_MAP = {
+        "Leverage / Credit":   ["net_leverage_flag",     "interest_coverage_flag"],
+        "Coverage":            ["interest_coverage_flag"],
+        "Revenue Growth":      ["revenue_growth_flag"],
+        "EBITDA / Margin":     ["ebitda_margin_flag"],
+        "Returns":             [],   # MOI/IRR — pending Investran
+        "Liquidity":           [],   # Cash/Debt — from portfolio flags view
+    }
+    active_flag_cols = []
+    for mt in sel_metrics:
+        active_flag_cols.extend(METRIC_TYPE_MAP.get(mt, []))
+    active_flag_cols = list(set(active_flag_cols)) if active_flag_cols else None
 
     red    = flags_filtered[flags_filtered["overall_flag"] == "Red"]
     yellow = flags_filtered[flags_filtered["overall_flag"] == "Yellow"]
