@@ -441,7 +441,12 @@ def render_top_nav():
     except Exception:
         pass
 
-    # Brand bar
+    # AI panel toggle state
+    if "ai_panel_open" not in st.session_state:
+        st.session_state["ai_panel_open"] = False
+    ai_open = st.session_state.get("ai_panel_open", False)
+
+    # Brand bar — pure HTML, full width
     st.markdown(f"""
     <div class="tsg-brand-bar">
         <div class="tsg-brand-logo">
@@ -453,28 +458,34 @@ def render_top_nav():
     </div>
     """, unsafe_allow_html=True)
 
-    # Nav buttons — one per page, styled as tabs via CSS
-    # Using buttons (not radio) avoids session state conflicts with
-    # other widgets triggering reruns.
-    btn_cols = st.columns(len(PAGES))
-    for i, (label, key) in enumerate(PAGES):
-        display = f"{label} ({red_count})" if key == "flags_alerts" and red_count > 0 else label
-        is_active = (key == current)
-        # Active tab gets a different style via a unique key prefix
-        prefix = "nav_active_" if is_active else "nav_"
-        if btn_cols[i].button(
-            display,
-            key=f"{prefix}{key}",
-            use_container_width=True,
-            type="primary" if is_active else "secondary"
-        ):
-            if key != current:
-                st.session_state["page"] = key
-                if key != "company_detail":
-                    st.session_state.pop("selected_company", None)
-                for k in ["drill_page", "drill_company", "drill_metric", "flag_filter_company"]:
-                    st.session_state.pop(k, None)
+    # Nav tab row — page buttons + AI toggle at the end
+    all_nav = list(PAGES) + [("AI Chat" if not ai_open else "✕ Close AI", "_ai_toggle")]
+    btn_cols = st.columns(len(all_nav))
+
+    for i, (label, key) in enumerate(all_nav):
+        col = btn_cols[i]
+
+        if key == "_ai_toggle":
+            # AI toggle — always shown at right end
+            if col.button(label, key="toggle_ai_panel",
+                           use_container_width=True,
+                           type="primary" if ai_open else "secondary"):
+                st.session_state["ai_panel_open"] = not ai_open
                 st.rerun()
+        else:
+            display   = f"{label} ({red_count})" if key == "flags_alerts" and red_count > 0 else label
+            is_active = (key == current)
+            prefix    = "nav_active_" if is_active else "nav_"
+            if col.button(display, key=f"{prefix}{key}",
+                           use_container_width=True,
+                           type="primary" if is_active else "secondary"):
+                if key != current:
+                    st.session_state["page"] = key
+                    if key != "company_detail":
+                        st.session_state.pop("selected_company", None)
+                    for k in ["drill_page", "drill_company", "drill_metric", "flag_filter_company"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
 
     # Style nav buttons as tabs
     st.markdown(f"""
@@ -1656,6 +1667,113 @@ def page_portfolio_ai():
 
 
 # ---------------------------------------------------------------------------
+# Persistent AI panel — renders in right column when toggled open
+# ---------------------------------------------------------------------------
+
+def render_ai_panel():
+    """Persistent AI analyst panel shown alongside any page."""
+    page    = st.session_state.get("page", "portfolio_overview")
+    company = st.session_state.get("selected_company")
+
+    st.markdown(f"""
+    <div style="background:{NAVY}; padding:10px 14px; border-radius:6px 6px 0 0;
+                margin-bottom:0;">
+        <span style="color:white; font-size:13px; font-weight:700;
+                     font-family:Arial;">AI Analyst</span>
+        <span style="color:{SKY}; font-size:11px; font-family:Arial;
+                     margin-left:8px;">Ask anything</span>
+    </div>
+    <div style="background:white; border:1px solid {BORDER}; border-top:none;
+                border-radius:0 0 6px 6px; padding:10px; margin-bottom:12px;">
+    """, unsafe_allow_html=True)
+
+    # Build context based on current page
+    try:
+        from ai import (build_portfolio_context_with_news,
+                        build_company_context_with_news, ask_claude)
+        if page == "company_detail" and company:
+            context     = build_company_context_with_news(company)
+            placeholder = f"Ask about {company}..."
+            suggested   = [
+                f"Summarize {company} in 3 bullets",
+                f"Key risks for {company}?",
+                f"Write a board update for {company}",
+            ]
+        else:
+            context     = build_portfolio_context_with_news()
+            placeholder = "Ask about the portfolio..."
+            suggested   = [
+                "Which companies have the highest leverage?",
+                "Summarize red flag companies",
+                "Rank companies by revenue growth",
+                "Write a fund overview paragraph",
+            ]
+        ai_available = True
+    except Exception:
+        ai_available = False
+        context      = ""
+        placeholder  = "AI unavailable"
+        suggested    = []
+
+    # Chat history — keyed by page so context resets on navigation
+    chat_key = f"ai_panel_{page}_{company or 'portfolio'}"
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    history = st.session_state[chat_key]
+
+    # Suggested prompts
+    if suggested and not history:
+        for prompt in suggested:
+            if st.button(prompt, key=f"panel_prompt_{prompt[:25]}",
+                          use_container_width=True):
+                history.append({"role": "user", "content": prompt})
+                if ai_available:
+                    with st.spinner("Thinking..."):
+                        response = ask_claude(prompt, context, [])
+                    history.append({"role": "assistant", "content": response})
+                st.session_state[chat_key] = history
+                st.rerun()
+
+    # Chat messages
+    for msg in history:
+        if msg["role"] == "user":
+            st.markdown(f"""
+            <div style="background:{NAVY}; color:white; padding:8px 10px;
+                        border-radius:10px 10px 2px 10px; margin:4px 0;
+                        font-size:12px; font-family:Arial;">
+                {msg["content"]}
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background:{LIGHT_BG}; color:{NAVY}; padding:8px 10px;
+                        border-radius:10px 10px 10px 2px; margin:4px 0;
+                        font-size:12px; font-family:Arial; border:1px solid {BORDER};">
+                {msg["content"]}
+            </div>""", unsafe_allow_html=True)
+
+    if history:
+        if st.button("Clear", key="ai_panel_clear", use_container_width=True):
+            st.session_state[chat_key] = []
+            st.rerun()
+
+    # Input
+    if ai_available:
+        user_input = st.chat_input(placeholder, key="ai_panel_input")
+        if user_input:
+            history.append({"role": "user", "content": user_input})
+            with st.spinner("Thinking..."):
+                response = ask_claude(user_input, context, history[:-1])
+            history.append({"role": "assistant", "content": response})
+            st.session_state[chat_key] = history
+            st.rerun()
+    else:
+        st.info("Add Anthropic API key to secrets to enable AI.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1677,29 +1795,41 @@ def main():
     # Render top nav bar
     render_top_nav()
 
-    # Route to current page
-    page = st.session_state.get("page", "portfolio_overview")
+    # Route to current page — split layout when AI panel is open
+    page       = st.session_state.get("page", "portfolio_overview")
+    ai_open    = st.session_state.get("ai_panel_open", False)
 
-    if page == "portfolio_overview":
-        page_portfolio_overview()
-    elif page == "fund_summary":
-        page_fund_summary()
-    elif page == "company_detail":
-        from pages_extra import page_company_detail_enhanced
-        page_company_detail_enhanced()
-    elif page == "flags_alerts":
-        page_flags_alerts()
-    elif page == "consumer_kpis":
-        from pages_extra import page_consumer_kpis
-        page_consumer_kpis()
-    elif page == "portfolio_flags":
-        from page_portfolio_flags import page_portfolio_flags
-        page_portfolio_flags()
-    elif page == "ai_analyst":
-        page_portfolio_ai()
-    elif page == "export_ppt":
-        from export_ppt import page_export
-        page_export()
+    if ai_open:
+        main_col, ai_col = st.columns([3, 1])
+    else:
+        main_col = st.container()
+        ai_col   = None
+
+    with main_col:
+        if page == "portfolio_overview":
+            page_portfolio_overview()
+        elif page == "fund_summary":
+            page_fund_summary()
+        elif page == "company_detail":
+            from pages_extra import page_company_detail_enhanced
+            page_company_detail_enhanced()
+        elif page == "flags_alerts":
+            page_flags_alerts()
+        elif page == "consumer_kpis":
+            from pages_extra import page_consumer_kpis
+            page_consumer_kpis()
+        elif page == "portfolio_flags":
+            from page_portfolio_flags import page_portfolio_flags
+            page_portfolio_flags()
+        elif page == "ai_analyst":
+            page_portfolio_ai()
+        elif page == "export_ppt":
+            from export_ppt import page_export
+            page_export()
+
+    if ai_open and ai_col is not None:
+        with ai_col:
+            render_ai_panel()
 
 
 if __name__ == "__main__":
