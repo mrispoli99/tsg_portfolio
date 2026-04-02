@@ -416,8 +416,6 @@ PAGES = [
     ("Fund Snapshot",       "fund_summary"),
     ("Company Detail",      "company_detail"),
     ("Flags & Alerts",      "flags_alerts"),
-    ("Consumer KPIs",       "consumer_kpis"),
-    ("Portfolio Flags",     "portfolio_flags"),
     ("AI Analyst",          "ai_analyst"),
     ("Export to PPT",       "export_ppt"),
 ]
@@ -1480,7 +1478,7 @@ def page_flags_alerts():
     # -----------------------------------------------------------------------
     view_mode = st.radio(
         "View",
-        ["Portfolio KPIs", "Company KPIs", "Scorecard Table"],
+        ["Portfolio KPIs", "Company KPIs", "Scorecard Table", "Consumer KPIs"],
         horizontal=True,
         label_visibility="collapsed",
         key="flags_view_mode"
@@ -1807,6 +1805,16 @@ def page_flags_alerts():
                 st.session_state["page"]             = "company_detail"
                 st.session_state["selected_company"] = str(cname)
                 st.rerun()
+
+    # -----------------------------------------------------------------------
+    # VIEW 4: Consumer KPIs  (moved from standalone page)
+    # -----------------------------------------------------------------------
+    if view_mode == "Consumer KPIs":
+        try:
+            from pages_extra import page_consumer_kpis
+            page_consumer_kpis()
+        except Exception as exc:
+            st.error(f"Consumer KPIs error: {exc}")
 
 
 # ---------------------------------------------------------------------------

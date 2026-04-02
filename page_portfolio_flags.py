@@ -16,8 +16,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from db import get_engine, get_company_list, format_millions, format_multiple, format_pct
-from sqlalchemy import text
+from db import load_portfolio_flags, get_company_list, format_millions, format_multiple, format_pct
 
 # Brand colors
 NAVY      = "#071733"
@@ -91,10 +90,7 @@ SIGNAL_COLS = [
 ]
 
 
-@st.cache_data(ttl=86400)
-def load_portfolio_flags() -> pd.DataFrame:
-    return pd.read_sql("SELECT * FROM dbo.vw_portfolio_flags ORDER BY red_flag_count DESC, company_name",
-                       get_engine())
+
 
 
 def flag_badge_html(flag: str) -> str:

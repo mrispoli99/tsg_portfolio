@@ -7,13 +7,14 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+# CSVs sit in the same directory as db.py (repo root)
 DATA_DIR = Path(__file__).parent
 
 
 def _csv(filename: str) -> pd.DataFrame:
     path = DATA_DIR / filename
     if not path.exists():
-        st.error(f"Missing data file: {filename}. Run export_to_csv.py on your VM.")
+        st.warning(f"Data file not found: `{filename}` (looked in `{DATA_DIR}`)")
         return pd.DataFrame()
     df = pd.read_csv(path, low_memory=False)
     for col in df.columns:
