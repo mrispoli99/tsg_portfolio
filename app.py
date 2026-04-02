@@ -453,91 +453,64 @@ def render_top_nav():
     </div>
     """, unsafe_allow_html=True)
 
-    # Build page labels (add badge text for flags)
-    labels = []
-    for label, key in PAGES:
-        if key == "flags_alerts" and red_count > 0:
-            labels.append(f"{label} ({red_count})")
-        else:
-            labels.append(label)
+    # Nav buttons — one per page, styled as tabs via CSS
+    # Using buttons (not radio) avoids session state conflicts with
+    # other widgets triggering reruns.
+    btn_cols = st.columns(len(PAGES))
+    for i, (label, key) in enumerate(PAGES):
+        display = f"{label} ({red_count})" if key == "flags_alerts" and red_count > 0 else label
+        is_active = (key == current)
+        # Active tab gets a different style via a unique key prefix
+        prefix = "nav_active_" if is_active else "nav_"
+        if btn_cols[i].button(
+            display,
+            key=f"{prefix}{key}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary"
+        ):
+            if key != current:
+                st.session_state["page"] = key
+                if key != "company_detail":
+                    st.session_state.pop("selected_company", None)
+                for k in ["drill_page", "drill_company", "drill_metric", "flag_filter_company"]:
+                    st.session_state.pop(k, None)
+                st.rerun()
 
-    keys   = [k for _, k in PAGES]
-
-    # Use st.radio with horizontal layout — styled to look like tabs
-    current_label = labels[keys.index(current)] if current in keys else labels[0]
-
-    st.markdown("""
+    # Style nav buttons as tabs
+    st.markdown(f"""
     <style>
-    /* Style radio buttons as tab bar */
-    div[data-testid="stRadio"] {
-        background: white;
-        border-bottom: 2px solid #E0E4EA;
-        padding: 0 8px;
-        margin: 0;
-    }
-    div[data-testid="stRadio"] > div {
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-        gap: 0 !important;
-    }
-    div[data-testid="stRadio"] label {
-        padding: 10px 16px !important;
+    /* Style all nav buttons as tabs */
+    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button {{
+        border: none !important;
+        border-radius: 0 !important;
+        border-bottom: 3px solid transparent !important;
+        background: transparent !important;
+        color: {SLATE} !important;
         font-size: 13px !important;
         font-family: Arial, sans-serif !important;
-        color: #3F6680 !important;
-        border-bottom: 3px solid transparent !important;
+        font-weight: 500 !important;
+        padding: 8px 4px !important;
         margin-bottom: -2px !important;
-        cursor: pointer !important;
-        white-space: nowrap !important;
+    }}
+    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button:hover {{
+        color: {NAVY} !important;
+        border-bottom-color: {SKY} !important;
         background: transparent !important;
-    }
-    div[data-testid="stRadio"] label:hover {
-        color: #071733 !important;
-        border-bottom-color: #A8CFDE !important;
-    }
-    div[data-testid="stRadio"] label[data-selected="true"],
-    div[data-testid="stRadio"] input:checked + div {
-        color: #071733 !important;
+    }}
+    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button[kind="primary"] {{
+        color: {NAVY} !important;
         font-weight: 700 !important;
-        border-bottom: 3px solid #071733 !important;
-    }
-    /* Hide the radio circles */
-    div[data-testid="stRadio"] input[type="radio"] {
-        display: none !important;
-    }
-    div[data-testid="stRadio"] svg {
-        display: none !important;
-    }
-    div[data-testid="stRadio"] > label {
-        display: none !important;
-    }
+        border-bottom: 3px solid {NAVY} !important;
+        background: transparent !important;
+    }}
+    div[data-testid="stHorizontalBlock"]:nth-of-type(1) {{
+        background: white !important;
+        border-bottom: 2px solid {BORDER} !important;
+        padding: 0 8px !important;
+        gap: 0 !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
-
-    # Sync radio to current page BEFORE rendering so it always
-    # reflects what session_state["page"] says, not its own cached state.
-    correct_index = labels.index(current_label) if current_label in labels else 0
-    # Pre-set the radio widget value to match current page
-    st.session_state["_nav_radio_value"] = labels[correct_index]
-
-    selected_label = st.radio(
-        "nav", labels,
-        index=correct_index,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="_nav_radio_value"
-    )
-
-    # Navigate only when user clicks a different tab
-    selected_key = keys[labels.index(selected_label)] if selected_label in labels else keys[0]
-    if selected_key != current:
-        st.session_state["page"] = selected_key
-        # Only clear company selection when explicitly navigating away from company detail
-        if selected_key != "company_detail":
-            st.session_state.pop("selected_company", None)
-        for k in ["drill_page", "drill_company", "drill_metric", "flag_filter_company"]:
-            st.session_state.pop(k, None)
-        st.rerun()
 
 
 def render_page_header(title: str):
@@ -1334,7 +1307,7 @@ def page_flags_alerts():
 
     flag_cols_to_style = ["Overall", "Rev Flag", "Margin Flag", "Lev Flag", "Cov Flag"]
     styled = (score_df.set_index("Company")
-                      .style.applymap(color_flag, subset=flag_cols_to_style))
+                      .style.map(color_flag, subset=flag_cols_to_style))
     st.dataframe(styled, use_container_width=True, height=500)
 
 
