@@ -485,60 +485,78 @@ def render_top_nav():
                         st.session_state.pop(k, None)
                     st.rerun()
 
-    # Style nav buttons as tabs — scoped to .tsg-nav-row to avoid
-    # accidentally styling buttons on other pages (e.g. SOP sidebar)
+    # Style nav buttons as tabs
+    # Key insight: Streamlit primary buttons use white text by default.
+    # We must target the inner <p> element to force dark text.
+    # We also give the nav row a solid white background so all buttons
+    # are readable regardless of Streamlit's page background colour.
     st.markdown(f"""
     <style>
-    /* Nav tab row */
+    /* ── Nav row wrapper ── */
     .tsg-nav-row {{
-        background: white;
+        background: #FFFFFF;
         border-bottom: 2px solid {BORDER};
-        padding: 0 8px;
-        gap: 0;
+        padding: 0 4px;
     }}
-    /* All nav buttons — inactive state */
-    .tsg-nav-row button {{
+
+    /* ── Every button in the nav ── */
+    .tsg-nav-row button,
+    .tsg-nav-row [data-testid^="stBaseButton"] {{
         border: none !important;
         border-radius: 0 !important;
         border-bottom: 3px solid transparent !important;
-        background: transparent !important;
-        color: {SLATE} !important;
+        background: #FFFFFF !important;
+        background-color: #FFFFFF !important;
+        box-shadow: none !important;
         font-size: 13px !important;
         font-family: Arial, sans-serif !important;
         font-weight: 500 !important;
-        padding: 8px 4px !important;
-        margin-bottom: -2px !important;
-    }}
-    /* Hover state */
-    .tsg-nav-row button:hover {{
-        color: {NAVY} !important;
-        border-bottom-color: {SKY} !important;
-        background: transparent !important;
-    }}
-    /* Active tab — primary type — must show dark text, NOT white */
-    .tsg-nav-row button[kind="primary"],
-    .tsg-nav-row button[data-testid="baseButton-primary"] {{
-        color: {NAVY} !important;
-        font-weight: 700 !important;
-        border-bottom: 3px solid {NAVY} !important;
-        background: transparent !important;
-        /* Override Streamlit default white-on-navy for primary buttons */
-        background-color: transparent !important;
-    }}
-    /* Fix all Streamlit primary buttons that appear in nav context */
-    .tsg-nav-row [data-testid="stBaseButton-primary"] > div > p {{
-        color: {NAVY} !important;
+        padding: 8px 6px !important;
     }}
 
-    /* Global fix: login/logout/other utility buttons that go invisible */
-    /* Streamlit renders secondary buttons with grey border — ensure text is always visible */
-    button[kind="secondary"],
-    [data-testid="stBaseButton-secondary"] {{
+    /* ── Text inside every nav button ── */
+    .tsg-nav-row button p,
+    .tsg-nav-row [data-testid^="stBaseButton"] p {{
         color: {SLATE} !important;
+        font-size: 13px !important;
+        font-weight: 500 !important;
     }}
-    button[kind="secondary"]:hover,
-    [data-testid="stBaseButton-secondary"]:hover {{
+
+    /* ── Hover ── */
+    .tsg-nav-row button:hover p,
+    .tsg-nav-row [data-testid^="stBaseButton"]:hover p {{
         color: {NAVY} !important;
+        font-weight: 600 !important;
+    }}
+    .tsg-nav-row button:hover,
+    .tsg-nav-row [data-testid^="stBaseButton"]:hover {{
+        border-bottom-color: {SKY} !important;
+        background: #FFFFFF !important;
+    }}
+
+    /* ── Active / primary tab ── */
+    .tsg-nav-row button[kind="primary"],
+    .tsg-nav-row [data-testid="stBaseButton-primary"] {{
+        border-bottom: 3px solid {NAVY} !important;
+        background: #FFFFFF !important;
+        background-color: #FFFFFF !important;
+    }}
+    .tsg-nav-row button[kind="primary"] p,
+    .tsg-nav-row [data-testid="stBaseButton-primary"] p {{
+        color: {NAVY} !important;
+        font-weight: 700 !important;
+    }}
+
+    /* ── Global: any button whose text is invisible (login/logout etc.) ── */
+    /* Streamlit wraps button text in <p> — ensure it's never white-on-white */
+    section[data-testid="stSidebar"] button p,
+    .stButton button p {{
+        color: inherit;
+    }}
+    /* Secondary buttons everywhere — ensure visible dark text */
+    button[kind="secondary"] p,
+    [data-testid="stBaseButton-secondary"] p {{
+        color: {SLATE} !important;
     }}
     </style>
     """, unsafe_allow_html=True)
