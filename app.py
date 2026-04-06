@@ -489,20 +489,56 @@ def render_top_nav():
     # accidentally styling buttons on other pages (e.g. SOP sidebar)
     st.markdown(f"""
     <style>
-    .tsg-nav-row {{ background:white; border-bottom:2px solid {BORDER}; padding:0 8px; gap:0; }}
+    /* Nav tab row */
+    .tsg-nav-row {{
+        background: white;
+        border-bottom: 2px solid {BORDER};
+        padding: 0 8px;
+        gap: 0;
+    }}
+    /* All nav buttons — inactive state */
     .tsg-nav-row button {{
-        border:none !important; border-radius:0 !important;
-        border-bottom:3px solid transparent !important;
-        background:transparent !important; color:{SLATE} !important;
-        font-size:13px !important; font-family:Arial,sans-serif !important;
-        font-weight:500 !important; padding:8px 4px !important; margin-bottom:-2px !important;
+        border: none !important;
+        border-radius: 0 !important;
+        border-bottom: 3px solid transparent !important;
+        background: transparent !important;
+        color: {SLATE} !important;
+        font-size: 13px !important;
+        font-family: Arial, sans-serif !important;
+        font-weight: 500 !important;
+        padding: 8px 4px !important;
+        margin-bottom: -2px !important;
     }}
+    /* Hover state */
     .tsg-nav-row button:hover {{
-        color:{NAVY} !important; border-bottom-color:{SKY} !important; background:transparent !important;
+        color: {NAVY} !important;
+        border-bottom-color: {SKY} !important;
+        background: transparent !important;
     }}
-    .tsg-nav-row button[kind="primary"] {{
-        color:{NAVY} !important; font-weight:700 !important;
-        border-bottom:3px solid {NAVY} !important; background:transparent !important;
+    /* Active tab — primary type — must show dark text, NOT white */
+    .tsg-nav-row button[kind="primary"],
+    .tsg-nav-row button[data-testid="baseButton-primary"] {{
+        color: {NAVY} !important;
+        font-weight: 700 !important;
+        border-bottom: 3px solid {NAVY} !important;
+        background: transparent !important;
+        /* Override Streamlit default white-on-navy for primary buttons */
+        background-color: transparent !important;
+    }}
+    /* Fix all Streamlit primary buttons that appear in nav context */
+    .tsg-nav-row [data-testid="stBaseButton-primary"] > div > p {{
+        color: {NAVY} !important;
+    }}
+
+    /* Global fix: login/logout/other utility buttons that go invisible */
+    /* Streamlit renders secondary buttons with grey border — ensure text is always visible */
+    button[kind="secondary"],
+    [data-testid="stBaseButton-secondary"] {{
+        color: {SLATE} !important;
+    }}
+    button[kind="secondary"]:hover,
+    [data-testid="stBaseButton-secondary"]:hover {{
+        color: {NAVY} !important;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -831,191 +867,226 @@ def page_portfolio_overview():
     # ---- TAB 2: Investment Summary — KPI-first view ----
     with po_tab2:
 
-        # Controls row
-        ctrl_left, ctrl_right = st.columns([3, 1])
-        with ctrl_left:
-            st.markdown('<div class="section-header">Investment Summary — KPI View</div>',
-                        unsafe_allow_html=True)
-        with ctrl_right:
-            period_mode = st.radio("Period", ["Quarterly", "Monthly"],
-                                    horizontal=True, key="po_inv_period_mode",
-                                    label_visibility="collapsed")
-
         # ----------------------------------------------------------------
-        # Build KPI summary table — rows = KPIs, columns = companies
+        # KPI definitions
         # ----------------------------------------------------------------
         KPI_DEFS = [
-            # (display_label, q_col, flag_col, fmt_fn, is_pct, category)
-            ("LTM Revenue ($M)",     "revenue",              None,                    format_millions, False, "Revenue"),
-            ("Rev Growth (YoY)",     "revenue",              "revenue_growth_flag",   format_pct,      True,  "Revenue"),
-            ("LTM Adj. EBITDA ($M)", "adj_ebitda",           None,                    format_millions, False, "EBITDA"),
-            ("EBITDA Margin",        "adj_ebitda_margin_pct","ebitda_margin_flag",    format_pct,      True,  "EBITDA"),
-            ("Gross Profit ($M)",    "gross_profit",         None,                    format_millions, False, "Margin"),
-            ("Net Leverage",         "net_leverage",         "net_leverage_flag",     format_multiple, False, "Leverage"),
-            ("Interest Coverage",    "interest_coverage",    "interest_coverage_flag",format_multiple, False, "Coverage"),
+            # (label, q_col, flag_col, fmt_fn, is_pct, category)
+            ("LTM Revenue",      "revenue",               None,                    format_millions, False, "Revenue"),
+            ("Rev Growth (YoY)", "revenue",               "revenue_growth_flag",   format_pct,      True,  "Revenue"),
+            ("LTM Adj. EBITDA",  "adj_ebitda",            None,                    format_millions, False, "EBITDA"),
+            ("EBITDA Margin",    "adj_ebitda_margin_pct", "ebitda_margin_flag",    format_pct,      True,  "EBITDA"),
+            ("Gross Profit",     "gross_profit",          None,                    format_millions, False, "Margin"),
+            ("Net Leverage",     "net_leverage",          "net_leverage_flag",     format_multiple, False, "Leverage"),
+            ("Interest Coverage","interest_coverage",     "interest_coverage_flag",format_multiple, False, "Coverage"),
         ]
+        kpi_labels = [d[0] for d in KPI_DEFS]
+        kpi_lookup = {d[0]: d for d in KPI_DEFS}
 
-        # Get the latest period per company (or use fs_filtered for static fields)
+        # Period toggle + active KPI state
+        h1, h2 = st.columns([5, 1])
+        with h1:
+            st.markdown('<div class="section-header">Investment Summary — KPI View</div>',
+                        unsafe_allow_html=True)
+            st.caption("Click any KPI button to drill into company-level trend and comparison.")
+        with h2:
+            period_mode = st.radio("Period", ["Quarterly", "Monthly"],
+                                    horizontal=False, key="po_inv_period_mode",
+                                    label_visibility="collapsed")
+
+        # Session state for active KPI
+        if "po_active_kpi" not in st.session_state:
+            st.session_state["po_active_kpi"] = kpi_labels[0]
+        active_kpi = st.session_state["po_active_kpi"]
+
+        # Prep data
         if not q_filt.empty:
-            # Sort and get latest quarter per company
-            q_sorted  = q_filt.sort_values("cash_flow_date")
-            q_latest  = q_sorted.groupby("company_name").last().reset_index()
-            q_prior   = q_sorted.groupby("company_name").nth(-2).reset_index()                         if period_mode == "Quarterly" else None
+            q_sorted      = q_filt.sort_values("cash_flow_date")
+            q_latest      = q_sorted.groupby("company_name").last().reset_index()
             companies_ord = sorted(q_latest["company_name"].unique().tolist())
         else:
-            q_latest = q_prior = pd.DataFrame()
+            q_latest      = pd.DataFrame()
             companies_ord = fs_filtered["company_name"].tolist()
 
-        # Build rows
-        rows = []
-        flag_mask = {}   # {(row_idx, col_idx): flag_color}
+        # ----------------------------------------------------------------
+        # KPI BUTTON ROW — clicking sets the active KPI
+        # ----------------------------------------------------------------
+        st.markdown(f"""
+        <style>
+        .kpi-btn-row button {{
+            font-size:11px !important; padding:6px 10px !important;
+            border-radius:20px !important; font-weight:600 !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
 
-        for kpi_label, q_col, flag_col, fmt, is_pct, category in KPI_DEFS:
-            row = {"Category": category, "KPI": kpi_label}
-            for cname in companies_ord:
-                if q_latest.empty:
-                    row[cname] = "—"
-                    continue
-                co_row = q_latest[q_latest["company_name"] == cname]
-                if co_row.empty or q_col not in co_row.columns:
-                    row[cname] = "—"
-                    continue
-                val = co_row.iloc[0][q_col]
+        btn_cols = st.columns(len(kpi_labels))
+        for i, lbl in enumerate(kpi_labels):
+            is_active_btn = (lbl == active_kpi)
+            _, flag_col_b, _, _, _, cat = kpi_lookup[lbl]
+            # Badge color by category
+            cat_color = {
+                "Revenue": NAVY, "EBITDA": SLATE, "Margin": SKY,
+                "Leverage": XANTHOUS, "Coverage": SEA_GREEN
+            }.get(cat, SLATE)
+            btn_type = "primary" if is_active_btn else "secondary"
+            if btn_cols[i].button(
+                lbl,
+                key=f"kpi_btn_{lbl}",
+                use_container_width=True,
+                type=btn_type,
+                help=f"Drill into {lbl} trend by company"
+            ):
+                st.session_state["po_active_kpi"] = lbl
+                st.rerun()
 
-                # For YoY growth, compute from flags or quarterly delta
-                if "YoY" in kpi_label and flag_col == "revenue_growth_flag":
-                    flag_row_f = flags_filtered[flags_filtered["company_name"] == cname]
-                    if not flag_row_f.empty and "revenue_yoy" in flag_row_f.columns:
-                        val = flag_row_f.iloc[0]["revenue_yoy"]
+        st.markdown("<br>", unsafe_allow_html=True)
 
-                row[cname] = fmt(val) if val is not None and not pd.isna(val) else "—"
+        # ----------------------------------------------------------------
+        # SUMMARY SNAPSHOT TABLE — all KPIs × companies, latest period
+        # ----------------------------------------------------------------
+        if not q_latest.empty:
+            snap_rows = []
+            for lbl, q_col, flag_col, fmt, is_pct, cat in KPI_DEFS:
+                row = {"KPI": lbl}
+                for cname in companies_ord:
+                    co = q_latest[q_latest["company_name"] == cname]
+                    if co.empty or q_col not in co.columns:
+                        row[cname] = "—"
+                        continue
+                    val = co.iloc[0][q_col]
+                    if "YoY" in lbl and flag_col == "revenue_growth_flag":
+                        fl = flags_filtered[flags_filtered["company_name"] == cname]
+                        if not fl.empty and "revenue_yoy" in fl.columns:
+                            val = fl.iloc[0]["revenue_yoy"]
+                    row[cname]              = fmt(val) if val is not None and not pd.isna(val) else "—"
+                    if flag_col:
+                        fl = flags_filtered[flags_filtered["company_name"] == cname]
+                        if not fl.empty and flag_col in fl.columns:
+                            row[f"__f_{cname}"] = fl.iloc[0][flag_col]
+                snap_rows.append(row)
 
-                # Track flag colors for styling
-                if flag_col:
-                    fl_src = flags_filtered[flags_filtered["company_name"] == cname]
-                    if not fl_src.empty and flag_col in fl_src.columns:
-                        fval = fl_src.iloc[0][flag_col]
-                        row[f"_flag_{cname}"] = fval   # hidden, used for styling
+            snap_df     = pd.DataFrame(snap_rows)
+            hidden_fcols= [c for c in snap_df.columns if c.startswith("__f_")]
+            disp_snap   = snap_df.drop(columns=hidden_fcols).set_index("KPI")
 
-            rows.append(row)
-
-        if rows:
-            kpi_tbl = pd.DataFrame(rows)
-
-            # Style the dataframe
-            def color_kpi_cell(val):
-                if "🔴" in str(val) or "Red" in str(val):    return f"color:{RED_FLAG};font-weight:700"
-                if "🟡" in str(val) or "Yellow" in str(val): return f"color:#B7860B;font-weight:700"
-                if "🟢" in str(val) or "Green" in str(val):  return f"color:{SEA_GREEN};font-weight:700"
-                return ""
-
-            # Drop hidden flag columns for display
-            hidden_cols = [c for c in kpi_tbl.columns if c.startswith("_flag_")]
-            disp_tbl    = kpi_tbl.drop(columns=hidden_cols).set_index(["Category", "KPI"])
-
-            # Apply flag-based coloring to company value cells using the hidden flag cols
-            def style_row(row):
-                styles = [""] * len(row)
-                for i, cname in enumerate(row.index):
-                    fval = kpi_tbl.loc[
-                        kpi_tbl["KPI"] == row.name[1], f"_flag_{cname}"
-                    ].values[0] if f"_flag_{cname}" in kpi_tbl.columns else None
-                    if fval == "Red":    styles[i] = f"color:{RED_FLAG};font-weight:700"
-                    elif fval == "Yellow": styles[i] = f"color:#B7860B;font-weight:700"
-                    elif fval == "Green":  styles[i] = f"color:{SEA_GREEN};font-weight:700"
-                return styles
+            # Highlight active KPI row + color-code flagged cells
+            def style_snap(row):
+                out = []
+                for cname in row.index:
+                    fval = snap_df.loc[snap_df["KPI"] == row.name,
+                                       f"__f_{cname}"].values[0]                            if f"__f_{cname}" in snap_df.columns else None
+                    is_active_row = (row.name == active_kpi)
+                    bg  = f"background:#EFF3F8;" if is_active_row else ""
+                    clr = ""
+                    fw  = "font-weight:700;" if is_active_row else ""
+                    if fval == "Red":    clr = f"color:{RED_FLAG};"
+                    elif fval == "Yellow": clr = "color:#B7860B;"
+                    elif fval == "Green":  clr = f"color:{SEA_GREEN};"
+                    out.append(bg + clr + fw)
+                return out
 
             try:
-                styled_kpi = disp_tbl.style.apply(style_row, axis=1)
+                styled_snap = disp_snap.style.apply(style_snap, axis=1)
             except Exception:
-                styled_kpi = disp_tbl.style
+                styled_snap = disp_snap.style
 
-            st.dataframe(styled_kpi, use_container_width=True, height=340)
-            st.caption("Values shown for latest period. Red/Yellow/Green coloring based on flag thresholds.")
+            st.dataframe(styled_snap, use_container_width=True,
+                         height=min(320, len(snap_rows) * 38 + 40))
+            st.caption(f"Active KPI highlighted. Click a button above to change. "
+                       f"Showing latest {'monthly' if period_mode=='Monthly' else 'quarterly'} values.")
 
         # ----------------------------------------------------------------
-        # KPI Drill-Through — click a KPI row → see trend chart + company table
+        # DRILL-THROUGH for active KPI
         # ----------------------------------------------------------------
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">KPI Trend Drill-Through</div>',
-                    unsafe_allow_html=True)
-        st.caption("Select a KPI to see trend across all companies, then click a company to view its detail page.")
+        _, sel_col, _, sel_fmt, sel_is_pct, _ = kpi_lookup[active_kpi]
 
-        drill_opts = {lbl: (qcol, is_pct) for lbl, qcol, _, _, is_pct, _ in KPI_DEFS}
-        sel_kpi = st.selectbox("Select KPI", list(drill_opts.keys()),
-                                key="po_kpi_drill2", label_visibility="collapsed")
-        sel_col, sel_is_pct = drill_opts[sel_kpi]
+        st.markdown(
+            f'<div class="section-header">{active_kpi} — Trend & Company Comparison</div>',
+            unsafe_allow_html=True
+        )
 
         if not q_filt.empty and sel_col in q_filt.columns:
-            # Monthly or quarterly grouping
             kpi_df = q_filt[["company_name","period_label","cash_flow_date",
                               sel_col]].dropna(subset=[sel_col]).copy()
-            if period_mode == "Monthly" and "cash_flow_date" in kpi_df.columns:
+
+            # Apply monthly relabelling if needed
+            if period_mode == "Monthly":
                 kpi_df["period_label"] = pd.to_datetime(
                     kpi_df["cash_flow_date"], errors="coerce").dt.strftime("%b %Y")
             kpi_df = kpi_df.sort_values("cash_flow_date")
 
-            # Trend chart — one line per company
+            # Trend line chart
             fig_drill = px.line(
                 kpi_df, x="period_label", y=sel_col,
                 color="company_name",
                 color_discrete_sequence=COMPANY_COLORS,
                 markers=True,
-                labels={"period_label": "", sel_col: sel_kpi, "company_name": "Company"},
-                title=""
+                labels={"period_label": "",
+                        sel_col: active_kpi,
+                        "company_name": "Company"},
             )
             fig_drill.update_layout(
-                height=360, plot_bgcolor="white", paper_bgcolor="white",
+                height=340, plot_bgcolor="white", paper_bgcolor="white",
                 margin=dict(l=0, r=0, t=10, b=0),
                 font=dict(family="Arial", color=NAVY, size=10),
                 legend=dict(font=dict(size=9), orientation="h", y=-0.28),
                 xaxis=dict(tickangle=-45),
-                yaxis=dict(tickformat=".0%" if sel_is_pct else "$,.0f", gridcolor=BORDER)
+                yaxis=dict(tickformat=".0%" if sel_is_pct else "$,.0f",
+                           gridcolor=BORDER)
             )
             st.plotly_chart(fig_drill, use_container_width=True)
 
-            # Company-level breakdown table for the selected KPI
-            st.markdown(f'<div class="section-header">{sel_kpi} — Latest vs Prior Period by Company</div>',
-                        unsafe_allow_html=True)
+            # Latest vs prior comparison table
+            st.markdown(
+                f'<div class="section-header">{active_kpi} — Latest vs Prior Period</div>',
+                unsafe_allow_html=True
+            )
+            latest_v = (kpi_df.groupby("company_name")
+                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-1][sel_col])
+                               .reset_index(name="Latest"))
+            prior_v  = (kpi_df.groupby("company_name")
+                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-2][sel_col]
+                                      if len(x) >= 2 else None)
+                               .reset_index(name="Prior"))
+            cmp = latest_v.merge(prior_v, on="company_name")
+            cmp["Change"]   = cmp["Latest"] - cmp["Prior"].fillna(0)
+            cmp["Change %"] = (cmp["Change"] / cmp["Prior"].abs()).where(
+                cmp["Prior"].notna() & (cmp["Prior"] != 0))
 
-            latest_vals = (kpi_df.groupby("company_name")
-                                  .apply(lambda x: x.sort_values("cash_flow_date").iloc[-1][sel_col])
-                                  .reset_index(name="Latest"))
-            prior_vals  = (kpi_df.groupby("company_name")
-                                  .apply(lambda x: x.sort_values("cash_flow_date").iloc[-2][sel_col]
-                                         if len(x) >= 2 else None)
-                                  .reset_index(name="Prior"))
-            cmp_tbl = latest_vals.merge(prior_vals, on="company_name")
-            cmp_tbl["Change"] = cmp_tbl["Latest"] - cmp_tbl["Prior"]
-            cmp_tbl["Change %"] = (cmp_tbl["Change"] / cmp_tbl["Prior"].abs()).where(
-                cmp_tbl["Prior"] != 0)
-
-            fmt_fn = format_pct if sel_is_pct else format_millions if "($M)" in sel_kpi else format_multiple
-            cmp_tbl["Latest"]   = cmp_tbl["Latest"].apply(fmt_fn)
-            cmp_tbl["Prior"]    = cmp_tbl["Prior"].apply(lambda x: fmt_fn(x) if x is not None else "—")
-            cmp_tbl["Change"]   = cmp_tbl["Change"].apply(lambda x: f"{x:+,.1f}" if x is not None else "—")
-            cmp_tbl["Change %"] = cmp_tbl["Change %"].apply(
+            cmp["Latest"]   = cmp["Latest"].apply(sel_fmt)
+            cmp["Prior"]    = cmp["Prior"].apply(
+                lambda x: sel_fmt(x) if x is not None and not pd.isna(x) else "—")
+            cmp["Change"]   = cmp["Change"].apply(
+                lambda x: f"{x:+,.1f}" if x is not None and not pd.isna(x) else "—")
+            cmp["Change %"] = cmp["Change %"].apply(
                 lambda x: f"{x*100:+.1f}%" if x is not None and not pd.isna(x) else "—")
-            cmp_tbl = cmp_tbl.rename(columns={"company_name": "Company"})
+            cmp = cmp.rename(columns={"company_name": "Company"})
 
-            def color_change(val):
-                if isinstance(val, str) and val.startswith("+"):  return f"color:{SEA_GREEN};font-weight:700"
-                if isinstance(val, str) and val.startswith("-"):  return f"color:{RED_FLAG};font-weight:700"
+            def color_chg(val):
+                s = str(val)
+                if s.startswith("+"): return f"color:{SEA_GREEN};font-weight:700"
+                if s.startswith("-"): return f"color:{RED_FLAG};font-weight:700"
                 return ""
 
-            styled_cmp = cmp_tbl.set_index("Company").style.map(color_change, subset=["Change","Change %"])
+            styled_cmp = (cmp.set_index("Company")
+                             .style.map(color_chg, subset=["Change","Change %"]))
             st.dataframe(styled_cmp, use_container_width=True)
 
-            # Click-through buttons
-            st.caption("Click a company to view its detail page:")
-            nav_cols = st.columns(min(6, len(cmp_tbl)))
-            for i, cname in enumerate(cmp_tbl["Company"].tolist()):
-                if nav_cols[i % len(nav_cols)].button(
+            # Click-through to Company Detail
+            st.caption("Click a company to open its detail page:")
+            nav_btns = st.columns(min(6, max(1, len(cmp))))
+            for i, cname in enumerate(cmp["Company"].tolist()):
+                if nav_btns[i % len(nav_btns)].button(
                     cname, key=f"is_goto_{cname}", use_container_width=True
                 ):
                     st.session_state["page"]             = "company_detail"
                     st.session_state["selected_company"] = cname
                     st.rerun()
+
+        else:
+            st.info("No quarterly data available for this KPI.")
 
     # ---- TAB 3: Valuation Charts (moved from Fund Summary) ----
     with po_tab3:
@@ -1236,59 +1307,19 @@ def page_fund_summary():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -----------------------------------------------------------------------
-    # TABS
+    # TABS — merged into one view (Investment Summary moved to Portfolio Overview)
     # -----------------------------------------------------------------------
-    tab_invest, tab_perf, tab_charts = st.tabs([
-        "Investment Summary", "Performance Charts", "Entry vs Current"
-    ])
 
-    # ---- TAB 1: Investment Summary table ----
-    with tab_invest:
-        st.markdown('<div class="section-header">TSG Investment Summary</div>',
-                    unsafe_allow_html=True)
+    # Drill-down check
+    if has_drill():
+        d = get_drill()
+        if d["page"] == "fund_summary" and d["company"]:
+            drill_tev_history(d["company"])
+            return
 
-        display = fs_f[[
-            "company_name", "sector", "investment_date", "security_type",
-            "ownership_structure", "entry_tev", "current_tev", "gross_moi",
-            "ltm_revenue", "ltm_adj_ebitda", "ltm_adj_ebitda_margin",
-            "net_leverage", "revenue_yoy", "overall_flag"
-        ]].copy()
-        display["investment_date"]       = pd.to_datetime(display["investment_date"]).dt.strftime("%b %Y")
-        display["entry_tev"]             = display["entry_tev"].apply(format_millions)
-        display["current_tev"]           = display["current_tev"].apply(format_millions)
-        display["gross_moi"]             = display["gross_moi"].apply(format_multiple)
-        display["ltm_revenue"]           = display["ltm_revenue"].apply(format_millions)
-        display["ltm_adj_ebitda"]        = display["ltm_adj_ebitda"].apply(format_millions)
-        display["ltm_adj_ebitda_margin"] = display["ltm_adj_ebitda_margin"].apply(format_pct)
-        display["net_leverage"]          = display["net_leverage"].apply(format_multiple)
-        display["revenue_yoy"]           = display["revenue_yoy"].apply(format_pct)
-        display["overall_flag"]          = display["overall_flag"].apply(
-            lambda x: f"{flag_emoji(x)} {x}")
-        display.columns = [
-            "Company", "Sector", "Entry Date", "Security", "Ownership",
-            "Entry TEV", "Current TEV", "Gross MOI",
-            "LTM Revenue", "LTM EBITDA", "EBITDA Mgn",
-            "Net Lev", "Rev Growth", "Flag"
-        ]
-        st.dataframe(display.set_index("Company"), use_container_width=True, height=500)
+    tab_perf, tab_entry = st.tabs(["Performance Charts", "Entry vs Current"])
 
-        # Drill-down check
-        if has_drill():
-            d = get_drill()
-            if d["page"] == "fund_summary" and d["company"]:
-                drill_tev_history(d["company"])
-                return
-
-        st.caption("Drill into TEV & valuation history:")
-        drill_cols = st.columns(5)
-        for i, (_, row) in enumerate(fs_f.iterrows()):
-            cname = row["company_name"]
-            if drill_cols[i % 5].button(cname, key=f"fs_drill_{cname}",
-                                         use_container_width=True):
-                set_drill("fund_summary", company=cname)
-                st.rerun()
-
-    # ---- TAB 2: Performance Charts ----
+    # ---- TAB 1: Performance Charts ----
     with tab_perf:
         # -- Capital Flow Bridge (pending Investran) --
         st.markdown('<div class="section-header">Capital Flow Bridge</div>',
@@ -1414,8 +1445,9 @@ def page_fund_summary():
             )
             st.plotly_chart(fig_sc, use_container_width=True)
 
-    # ---- TAB 3: Entry vs Current ----
-    with tab_charts:
+
+    # ---- TAB 2: Entry vs Current ----
+    with tab_entry:
         st.markdown('<div class="section-header">Entry vs Current EBITDA — Company Level</div>',
                     unsafe_allow_html=True)
 
