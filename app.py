@@ -383,7 +383,7 @@ def check_password() -> bool:
         st.markdown("<br>", unsafe_allow_html=True)
         password = st.text_input("Password", type="password", label_visibility="collapsed",
                                   placeholder="Enter password")
-        login_btn = st.button("Sign In", use_container_width=True, type="primary")
+        login_btn = st.button("Sign In", use_container_width=True, type="secondary")
 
         if login_btn:
             from db import get_secret
@@ -464,19 +464,19 @@ def render_top_nav():
         col = btn_cols[i]
 
         if key == "_ai_toggle":
-            # AI toggle — always shown at right end
             if col.button(label, key="toggle_ai_panel",
-                           use_container_width=True,
-                           type="primary" if ai_open else "secondary"):
+                          use_container_width=True,
+                          type="secondary"):
                 st.session_state["ai_panel_open"] = not ai_open
                 st.rerun()
         else:
             display   = f"{label} ({red_count})" if key == "flags_alerts" and red_count > 0 else label
             is_active = (key == current)
+            # All secondary — CSS targets active tab via aria-label key prefix
             prefix    = "nav_active_" if is_active else "nav_"
             if col.button(display, key=f"{prefix}{key}",
-                           use_container_width=True,
-                           type="primary" if is_active else "secondary"):
+                          use_container_width=True,
+                          type="secondary"):
                 if key != current:
                     st.session_state["page"] = key
                     if key != "company_detail":
@@ -485,78 +485,47 @@ def render_top_nav():
                         st.session_state.pop(k, None)
                     st.rerun()
 
-    # Style nav buttons as tabs
-    # Key insight: Streamlit primary buttons use white text by default.
-    # We must target the inner <p> element to force dark text.
-    # We also give the nav row a solid white background so all buttons
-    # are readable regardless of Streamlit's page background colour.
-    st.markdown(f"""
+    # Nav CSS: all buttons secondary — aria-label selector styles active tab
+    st.markdown("""
     <style>
-    /* ── Nav row wrapper ── */
     .tsg-nav-row {{
         background: #FFFFFF;
-        border-bottom: 2px solid {BORDER};
-        padding: 0 4px;
+        border-bottom: 2px solid #E0E4EA;
+        padding: 0;
+        margin-bottom: 8px;
     }}
-
-    /* ── Every button in the nav ── */
-    .tsg-nav-row button,
-    .tsg-nav-row [data-testid^="stBaseButton"] {{
+    .tsg-nav-row > div[data-testid="stHorizontalBlock"] {{
+        gap: 0 !important;
+        background: #FFFFFF;
+    }}
+    .tsg-nav-row button {{
         border: none !important;
-        border-radius: 0 !important;
         border-bottom: 3px solid transparent !important;
+        border-radius: 0 !important;
         background: #FFFFFF !important;
         background-color: #FFFFFF !important;
         box-shadow: none !important;
+        color: #3F6680 !important;
         font-size: 13px !important;
         font-family: Arial, sans-serif !important;
         font-weight: 500 !important;
-        padding: 8px 6px !important;
+        padding: 10px 8px !important;
+        width: 100% !important;
     }}
-
-    /* ── Text inside every nav button ── */
-    .tsg-nav-row button p,
-    .tsg-nav-row [data-testid^="stBaseButton"] p {{
-        color: {SLATE} !important;
-        font-size: 13px !important;
-        font-weight: 500 !important;
-    }}
-
-    /* ── Hover ── */
-    .tsg-nav-row button:hover p,
-    .tsg-nav-row [data-testid^="stBaseButton"]:hover p {{
-        color: {NAVY} !important;
-        font-weight: 600 !important;
-    }}
-    .tsg-nav-row button:hover,
-    .tsg-nav-row [data-testid^="stBaseButton"]:hover {{
-        border-bottom-color: {SKY} !important;
+    .tsg-nav-row button:hover {{
+        color: #071733 !important;
+        border-bottom-color: #A8CFDE !important;
         background: #FFFFFF !important;
     }}
-
-    /* ── Active / primary tab ── */
-    .tsg-nav-row button[kind="primary"],
-    .tsg-nav-row [data-testid="stBaseButton-primary"] {{
-        border-bottom: 3px solid {NAVY} !important;
-        background: #FFFFFF !important;
-        background-color: #FFFFFF !important;
-    }}
-    .tsg-nav-row button[kind="primary"] p,
-    .tsg-nav-row [data-testid="stBaseButton-primary"] p {{
-        color: {NAVY} !important;
+    .tsg-nav-row button[aria-label^="nav_active_"] {{
+        color: #071733 !important;
         font-weight: 700 !important;
+        border-bottom: 3px solid #071733 !important;
+        background: #FFFFFF !important;
     }}
-
-    /* ── Global: any button whose text is invisible (login/logout etc.) ── */
-    /* Streamlit wraps button text in <p> — ensure it's never white-on-white */
-    section[data-testid="stSidebar"] button p,
-    .stButton button p {{
-        color: inherit;
-    }}
-    /* Secondary buttons everywhere — ensure visible dark text */
-    button[kind="secondary"] p,
-    [data-testid="stBaseButton-secondary"] p {{
-        color: {SLATE} !important;
+    /* Global: ensure all buttons have visible text */
+    button, .stButton button {{
+        color: #071733 !important;
     }}
     </style>
     """, unsafe_allow_html=True)
