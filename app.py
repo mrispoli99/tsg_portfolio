@@ -417,6 +417,7 @@ PAGES = [
     ("Company Detail",      "company_detail"),
     ("Flags & Alerts",      "flags_alerts"),
     ("AI Analyst",          "ai_analyst"),
+    ("SOP / Training",      "sop_training"),
     ("Export to PPT",       "export_ppt"),
 ]
 
@@ -576,7 +577,6 @@ def flag_badge(flag: str) -> str:
 # ---------------------------------------------------------------------------
 
 def page_portfolio_overview():
-    # Check for drill-down state
     if has_drill():
         d = get_drill()
         if d["page"] == "overview" and d["company"]:
@@ -589,9 +589,10 @@ def page_portfolio_overview():
     if _ov_df.empty:
         st.error("Portfolio overview data not loaded. Check CSV files.")
         st.stop()
-    overview = _ov_df.iloc[0]
-    flags    = load_flags()
-    fs       = load_fund_summary()
+    overview  = _ov_df.iloc[0]
+    flags     = load_flags()
+    fs        = load_fund_summary()
+    quarterly = load_quarterly()
 
     # -----------------------------------------------------------------------
     # FILTERS
@@ -633,18 +634,21 @@ def page_portfolio_overview():
     if sel_funds_po and "funds" in fs_filtered.columns:
         fs_filtered = fs_filtered[fs_filtered["funds"].isin(sel_funds_po)]
 
-    # Recompute overview metrics from filtered set
-    total_tev      = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
-    total_revenue  = fs_filtered["ltm_revenue"].sum()   if not fs_filtered.empty else None
-    total_ebitda   = fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None
-    avg_leverage   = (fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum() /                      fs_filtered["current_tev"].sum()                      if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None
-    avg_margin     = fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None
+    filtered_names = fs_filtered["company_name"].tolist()
+    q_filt  = quarterly[quarterly["company_name"].isin(filtered_names)]               if not fs_filtered.empty else quarterly
+    flags_filtered = flags[flags["company_name"].isin(filtered_names)]                      if not flags.empty else flags
+
+    # Compute KPIs from filtered set
+    total_tev     = fs_filtered["current_tev"].sum()    if not fs_filtered.empty else None
+    total_revenue = fs_filtered["ltm_revenue"].sum()    if not fs_filtered.empty else None
+    total_ebitda  = fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None
+    avg_leverage  = (fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum() /                     fs_filtered["current_tev"].sum()                     if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None
+    avg_margin    = fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None
 
     # -----------------------------------------------------------------------
     # ALERT BANNER
     # -----------------------------------------------------------------------
-    flags_filtered = flags[flags["company_name"].isin(fs_filtered["company_name"])]                      if not flags.empty else flags
-    red_companies  = flags_filtered[flags_filtered["overall_flag"] == "Red"]["company_name"].tolist()
+    red_companies = flags_filtered[flags_filtered["overall_flag"] == "Red"]["company_name"].tolist()
     if red_companies:
         issues = []
         for _, row in flags_filtered[flags_filtered["overall_flag"] == "Red"].iterrows():
@@ -660,24 +664,27 @@ def page_portfolio_overview():
         <div class="alert-banner">
             🚨 <b>{len(red_companies)} Red Flag{"s" if len(red_companies)>1 else ""}</b> —
             {" · ".join(issues)}
+            &nbsp;&nbsp;
+            <a href="#" onclick="return false;" style="color:{RED_FLAG};font-weight:700;">
+            View Flags →</a>
         </div>
         """, unsafe_allow_html=True)
 
     # -----------------------------------------------------------------------
-    # KPI TILES — standardized, fixed height, pending for IRR/MOIC
+    # KPI TILES
     # -----------------------------------------------------------------------
     tile_cols = st.columns(8)
     tiles = [
-        (format_millions(total_tev),    "Total TEV",         "", False),
-        (format_millions(total_revenue),"LTM Revenue",       "", False),
-        (format_millions(total_ebitda), "LTM EBITDA",        "", False),
-        (format_multiple(avg_leverage), "Avg Net Leverage",  "", False),
-        (format_pct(avg_margin),        "Avg EBITDA Margin", "", False),
-        (None, "Gross MOIC",            "",                      True),
-        (None, "Gross IRR",             "",                      True),
-        (None, "Net IRR",               "",                      True),
+        (format_millions(total_tev),    "Total TEV",         False),
+        (format_millions(total_revenue),"LTM Revenue",       False),
+        (format_millions(total_ebitda), "LTM EBITDA",        False),
+        (format_multiple(avg_leverage), "Avg Net Leverage",  False),
+        (format_pct(avg_margin),        "Avg EBITDA Margin", False),
+        ("Gross MOIC",                  "Gross MOIC",        True),
+        ("Gross IRR",                   "Gross IRR",         True),
+        ("Net IRR",                     "Net IRR",           True),
     ]
-    for col, (val, label, delta, pending) in zip(tile_cols, tiles):
+    for col, (val, label, pending) in zip(tile_cols, tiles):
         if pending:
             col.markdown(kpi_tile_pending(label), unsafe_allow_html=True)
         else:
@@ -686,62 +693,279 @@ def page_portfolio_overview():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -----------------------------------------------------------------------
-    # CHARTS — Revenue/EBITDA (wider) + Sector donut (smaller)
+    # TABS: Charts | Investment Summary | Valuation Charts
     # -----------------------------------------------------------------------
-    col_left, col_right = st.columns([4, 1])   # wider left chart
+    po_tab1, po_tab2, po_tab3 = st.tabs([
+        "Revenue & EBITDA", "Investment Summary", "Valuation Charts"
+    ])
 
-    with col_left:
-        st.markdown('<div class="section-header">Portfolio Revenue & EBITDA — Quarterly LTM</div>',
+    # ---- TAB 1: Revenue & EBITDA with Monthly/Quarterly toggle ----
+    with po_tab1:
+        chart_col, donut_col = st.columns([3, 1])
+
+        with chart_col:
+            view_toggle = st.radio("Period", ["Quarterly", "Monthly"],
+                                    horizontal=True, key="po_period_toggle",
+                                    label_visibility="collapsed")
+
+            if view_toggle == "Quarterly" or q_filt.empty:
+                agg = q_filt.groupby("period_label").agg(
+                    revenue        = ("revenue",    "sum"),
+                    adj_ebitda     = ("adj_ebitda", "sum"),
+                    cash_flow_date = ("cash_flow_date", "max")
+                ).reset_index().sort_values("cash_flow_date").tail(12)
+                chart_title = "Portfolio Revenue & EBITDA — Quarterly LTM"
+            else:
+                # Monthly — use cash_flow_date directly
+                q_filt_m = q_filt.copy()
+                q_filt_m["month_label"] = pd.to_datetime(
+                    q_filt_m["cash_flow_date"], errors="coerce"
+                ).dt.strftime("%b %Y")
+                agg = q_filt_m.groupby("month_label").agg(
+                    revenue        = ("revenue",    "sum"),
+                    adj_ebitda     = ("adj_ebitda", "sum"),
+                    cash_flow_date = ("cash_flow_date", "max")
+                ).reset_index().rename(columns={"month_label": "period_label"})
+                agg = agg.sort_values("cash_flow_date").tail(18)
+                chart_title = "Portfolio Revenue & EBITDA — Monthly"
+
+            if not agg.empty:
+                st.markdown(f'<div class="section-header">{chart_title}</div>',
+                            unsafe_allow_html=True)
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                fig.add_trace(go.Bar(x=agg["period_label"], y=agg["revenue"],
+                                      name="Revenue ($M)", marker_color=SLATE, opacity=0.85),
+                              secondary_y=False)
+                fig.add_trace(go.Bar(x=agg["period_label"], y=agg["adj_ebitda"],
+                                      name="Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85),
+                              secondary_y=False)
+                margin = agg["adj_ebitda"] / agg["revenue"].replace(0, float("nan"))
+                fig.add_trace(go.Scatter(x=agg["period_label"], y=margin,
+                                          name="EBITDA Margin %", mode="lines+markers",
+                                          line=dict(color=XANTHOUS, width=2),
+                                          marker=dict(size=5)),
+                              secondary_y=True)
+                fig.update_layout(
+                    height=340, plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=10, b=0), barmode="group",
+                    legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+                    font=dict(family="Arial", color=NAVY, size=10)
+                )
+                fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
+                fig.update_yaxes(tickformat=".0%", secondary_y=True)
+                fig.update_xaxes(tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
+
+        with donut_col:
+            st.markdown('<div class="section-header">% of Deployed Capital by Sector</div>',
+                        unsafe_allow_html=True)
+            sector_data = fs_filtered.groupby("sector")["current_tev"].sum().reset_index()
+            sector_data = sector_data.dropna().sort_values("current_tev", ascending=False)
+            if not sector_data.empty:
+                fig2 = px.pie(sector_data, values="current_tev", names="sector", hole=0.55,
+                               color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS,
+                                                         CELADON, SEA_GREEN, MAGENTA, EGGPLANT])
+                fig2.update_traces(textposition="inside", textinfo="percent",
+                                   textfont_size=8)
+                fig2.update_layout(
+                    height=340, showlegend=True,
+                    legend=dict(font=dict(size=8), orientation="v",
+                                x=1.0, xanchor="left"),
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    paper_bgcolor="white"
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+    # ---- TAB 2: Investment Summary Table ----
+    with po_tab2:
+        st.markdown('<div class="section-header">Investment Summary</div>',
                     unsafe_allow_html=True)
-        quarterly = load_quarterly()
-        if not quarterly.empty:
-            q_filt = quarterly[quarterly["company_name"].isin(fs_filtered["company_name"])]                      if not fs_filtered.empty else quarterly
-            agg = q_filt.groupby("period_label").agg(
-                revenue        = ("revenue",    "sum"),
-                adj_ebitda     = ("adj_ebitda", "sum"),
-                cash_flow_date = ("cash_flow_date", "max")
-            ).reset_index().sort_values("cash_flow_date").tail(12)
 
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-            fig.add_trace(go.Bar(x=agg["period_label"], y=agg["revenue"],
-                                  name="Revenue ($M)", marker_color=SLATE, opacity=0.85),
-                          secondary_y=False)
-            fig.add_trace(go.Bar(x=agg["period_label"], y=agg["adj_ebitda"],
-                                  name="Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85),
-                          secondary_y=False)
-            margin = agg["adj_ebitda"] / agg["revenue"].replace(0, float("nan"))
-            fig.add_trace(go.Scatter(x=agg["period_label"], y=margin,
-                                      name="EBITDA Margin %", mode="lines+markers",
-                                      line=dict(color=XANTHOUS, width=2), marker=dict(size=5)),
-                          secondary_y=True)
-            fig.update_layout(
-                height=320, plot_bgcolor="white", paper_bgcolor="white",
-                margin=dict(l=0, r=0, t=10, b=0), barmode="group",
-                legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
-                font=dict(family="Arial", color=NAVY, size=10)
+        # Period filter for the table
+        period_filter = st.radio("Data Period", ["LTM (Latest)", "Prior Year"],
+                                  horizontal=True, key="po_inv_period",
+                                  label_visibility="collapsed")
+
+        display_cols = [
+            "company_name", "sector", "investment_date", "security_type",
+            "ownership_structure", "entry_tev", "current_tev", "gross_moi",
+            "ltm_revenue", "ltm_adj_ebitda", "ltm_adj_ebitda_margin",
+            "net_leverage", "revenue_yoy", "ebitda_yoy", "overall_flag"
+        ]
+        avail = [c for c in display_cols if c in fs_filtered.columns]
+        disp  = fs_filtered[avail].copy()
+
+        # Format
+        if "investment_date" in disp.columns:
+            disp["investment_date"] = pd.to_datetime(
+                disp["investment_date"], errors="coerce").dt.strftime("%b %Y")
+        for mc, fn in [
+            ("entry_tev",            format_millions),
+            ("current_tev",          format_millions),
+            ("gross_moi",            format_multiple),
+            ("ltm_revenue",          format_millions),
+            ("ltm_adj_ebitda",       format_millions),
+            ("ltm_adj_ebitda_margin",format_pct),
+            ("net_leverage",         format_multiple),
+            ("revenue_yoy",          format_pct),
+            ("ebitda_yoy",           format_pct),
+        ]:
+            if mc in disp.columns:
+                disp[mc] = disp[mc].apply(fn)
+        if "overall_flag" in disp.columns:
+            disp["overall_flag"] = disp["overall_flag"].apply(
+                lambda x: f"{flag_emoji(x)} {x}")
+
+        col_rename = {
+            "company_name":           "Company",
+            "sector":                 "Sector",
+            "investment_date":        "Entry",
+            "security_type":          "Security",
+            "ownership_structure":    "Ownership",
+            "entry_tev":              "Entry TEV",
+            "current_tev":            "Current TEV",
+            "gross_moi":              "Gross MOI",
+            "ltm_revenue":            "LTM Revenue",
+            "ltm_adj_ebitda":         "LTM EBITDA",
+            "ltm_adj_ebitda_margin":  "EBITDA Mgn",
+            "net_leverage":           "Net Lev",
+            "revenue_yoy":            "Rev Growth",
+            "ebitda_yoy":             "EBITDA Growth",
+            "overall_flag":           "Flag",
+        }
+        disp = disp.rename(columns={k: v for k, v in col_rename.items() if k in disp.columns})
+
+        def color_flag_tbl(val):
+            s = str(val)
+            if "🔴" in s or "Red" in s:    return f"color: {RED_FLAG}; font-weight: 700"
+            if "🟡" in s or "Yellow" in s: return f"color: #B7860B; font-weight: 700"
+            if "🟢" in s or "Green" in s:  return f"color: {SEA_GREEN}; font-weight: 700"
+            return ""
+
+        flag_style_cols = [c for c in ["Flag", "Rev Growth", "EBITDA Growth"] if c in disp.columns]
+        if "Company" in disp.columns:
+            styled = disp.set_index("Company").style.map(color_flag_tbl,
+                                                          subset=flag_style_cols)
+        else:
+            styled = disp.style.map(color_flag_tbl, subset=flag_style_cols)
+        st.dataframe(styled, use_container_width=True, height=550)
+
+        # KPI drill-through by metric
+        st.markdown('<div class="section-header">KPI Trend Drill-Through</div>',
+                    unsafe_allow_html=True)
+        st.caption("Select a KPI to see QoQ trend across all companies")
+        kpi_options = {
+            "Revenue":        "revenue",
+            "Adj. EBITDA":    "adj_ebitda",
+            "EBITDA Margin":  "adj_ebitda_margin_pct",
+            "Net Leverage":   "net_leverage",
+            "Gross Profit":   "gross_profit",
+        }
+        sel_kpi_label = st.selectbox("KPI", list(kpi_options.keys()),
+                                      key="po_kpi_drill", label_visibility="collapsed")
+        sel_kpi_col   = kpi_options[sel_kpi_label]
+
+        if not q_filt.empty and sel_kpi_col in q_filt.columns:
+            kpi_df = q_filt[["company_name", "period_label", "cash_flow_date",
+                              sel_kpi_col]].dropna(subset=[sel_kpi_col])
+            kpi_df = kpi_df.sort_values("cash_flow_date")
+            is_pct = "margin" in sel_kpi_col or "pct" in sel_kpi_col
+
+            fig_kpi = px.line(
+                kpi_df, x="period_label", y=sel_kpi_col,
+                color="company_name",
+                color_discrete_sequence=COMPANY_COLORS,
+                markers=True,
+                labels={"period_label": "", sel_kpi_col: sel_kpi_label,
+                        "company_name": "Company"}
             )
-            fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
-            fig.update_yaxes(tickformat=".0%", secondary_y=True)
-            fig.update_xaxes(tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col_right:
-        st.markdown('<div class="section-header">% by Sector</div>', unsafe_allow_html=True)
-        sector_data = fs_filtered.groupby("sector")["current_tev"].sum().reset_index()
-        sector_data = sector_data.dropna().sort_values("current_tev", ascending=False)
-        if not sector_data.empty:
-            fig2 = px.pie(sector_data, values="current_tev", names="sector", hole=0.6,
-                           color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS,
-                                                     CELADON, SEA_GREEN, MAGENTA, EGGPLANT])
-            fig2.update_traces(textposition="inside", textinfo="percent",
-                               textfont_size=9)
-            fig2.update_layout(
-                height=320, showlegend=True,
-                legend=dict(font=dict(size=9), orientation="v"),
+            fig_kpi.update_layout(
+                height=360, plot_bgcolor="white", paper_bgcolor="white",
                 margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor="white"
+                font=dict(family="Arial", color=NAVY, size=10),
+                legend=dict(font=dict(size=9), orientation="h", y=-0.25),
+                xaxis=dict(tickangle=-45),
+                yaxis=dict(tickformat=".0%" if is_pct else "$,.0f",
+                           gridcolor=BORDER)
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig_kpi, use_container_width=True)
+
+    # ---- TAB 3: Valuation Charts (moved from Fund Summary) ----
+    with po_tab3:
+        v_col1, v_col2 = st.columns(2)
+
+        with v_col1:
+            st.markdown('<div class="section-header">Value by Investment (Current TEV)</div>',
+                        unsafe_allow_html=True)
+            tev_df = fs_filtered.dropna(subset=["current_tev"]).sort_values(
+                "current_tev", ascending=True)
+            if not tev_df.empty:
+                fig_tev = go.Figure(go.Bar(
+                    x=tev_df["current_tev"], y=tev_df["company_name"],
+                    orientation="h", marker_color=NAVY,
+                    text=tev_df["current_tev"].apply(format_millions),
+                    textposition="outside"
+                ))
+                fig_tev.update_layout(
+                    height=max(280, len(tev_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=60, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat="$,.0f", gridcolor=BORDER)
+                )
+                st.plotly_chart(fig_tev, use_container_width=True)
+
+        with v_col2:
+            st.markdown('<div class="section-header">MOIC by Investment</div>',
+                        unsafe_allow_html=True)
+            moi_df = fs_filtered.dropna(subset=["gross_moi"]).sort_values(
+                "gross_moi", ascending=True)
+            if not moi_df.empty:
+                moi_df["bar_color"] = moi_df["gross_moi"].apply(
+                    lambda x: SEA_GREEN if x > 2.0 else XANTHOUS if x > 1.5 else RED_FLAG)
+                fig_moi = go.Figure(go.Bar(
+                    x=moi_df["gross_moi"], y=moi_df["company_name"],
+                    orientation="h",
+                    marker_color=moi_df["bar_color"].tolist(),
+                    text=moi_df["gross_moi"].apply(lambda x: f"{x:.2f}x"),
+                    textposition="outside"
+                ))
+                fig_moi.add_vline(x=1.0, line_dash="dash", line_color=RED_FLAG,
+                                   annotation_text="1.0x")
+                fig_moi.add_vline(x=2.0, line_dash="dot",  line_color=SEA_GREEN,
+                                   annotation_text="2.0x")
+                fig_moi.update_layout(
+                    height=max(280, len(moi_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=60, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=".2f", gridcolor=BORDER)
+                )
+                st.plotly_chart(fig_moi, use_container_width=True)
+
+        # Invested Capital — pending Investran
+        st.markdown('<div class="section-header">Invested Capital by Investment (Cost Basis)</div>',
+                    unsafe_allow_html=True)
+
+        # Use entry_tev as proxy for invested capital until Investran data available
+        ic_df = fs_filtered.dropna(subset=["entry_tev"]).sort_values("entry_tev", ascending=True)
+        if not ic_df.empty:
+            fig_ic = go.Figure(go.Bar(
+                x=ic_df["entry_tev"], y=ic_df["company_name"],
+                orientation="h", marker_color=SLATE,
+                text=ic_df["entry_tev"].apply(format_millions),
+                textposition="outside",
+                name="Entry TEV (Cost Proxy)"
+            ))
+            fig_ic.update_layout(
+                height=max(280, len(ic_df) * 28),
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=60, t=10, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                xaxis=dict(tickformat="$,.0f", gridcolor=BORDER)
+            )
+            st.plotly_chart(fig_ic, use_container_width=True)
+            st.caption("** Using Entry TEV as cost proxy — replace with Invested Capital from Investran when available")
 
     # -----------------------------------------------------------------------
     # ACTIVE PORTFOLIO COMPANIES
@@ -758,19 +982,16 @@ def page_portfolio_overview():
             st.rerun()
 
     companies = fs_filtered.sort_values(
-        "overall_flag",
-        key=lambda x: x.map({"Red": 0, "Yellow": 1, "Green": 2})
+        "overall_flag", key=lambda x: x.map({"Red": 0, "Yellow": 1, "Green": 2})
     )
     card_cols = st.columns(3)
     for i, (_, row) in enumerate(companies.iterrows()):
-        col        = card_cols[i % 3]
-        cname      = row.get("company_name", "")
-        rev_yoy    = row.get("revenue_yoy")
-        rev_color  = SEA_GREEN if pd.notna(rev_yoy) and rev_yoy > 0 else RED_FLAG
-        yoy_str    = format_pct(rev_yoy) if pd.notna(rev_yoy) else "—"
-
-        # Year acquired
-        inv_date   = row.get("investment_date", "")
+        col       = card_cols[i % 3]
+        cname     = row.get("company_name", "")
+        rev_yoy   = row.get("revenue_yoy")
+        rev_color = SEA_GREEN if pd.notna(rev_yoy) and rev_yoy > 0 else RED_FLAG
+        yoy_str   = format_pct(rev_yoy) if pd.notna(rev_yoy) else "—"
+        inv_date  = row.get("investment_date", "")
         try:
             inv_year = str(pd.to_datetime(inv_date).year)
         except Exception:
@@ -781,46 +1002,37 @@ def page_portfolio_overview():
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <div>
                     <div class="company-name">{cname}</div>
-                    <div class="company-sector">
-                        {row.get("sector","")} · Acq. {inv_year}
-                    </div>
+                    <div class="company-sector">{row.get("sector","")} · Acq. {inv_year}</div>
                 </div>
                 {flag_badge(row.get("overall_flag",""))}
             </div>
             <div style="margin-top:10px; display:flex; gap:14px; flex-wrap:wrap;">
-                <div>
-                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
-                        {format_millions(row.get("ltm_revenue"))}</span><br>
-                    <span style="font-size:10px;color:{SLATE};">LTM Rev</span>
-                </div>
-                <div>
-                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
-                        {format_multiple(row.get("net_leverage"))}</span><br>
-                    <span style="font-size:10px;color:{SLATE};">Net Lev</span>
-                </div>
-                <div>
-                    <span style="font-size:13px;font-weight:700;color:{NAVY};">
-                        {format_pct(row.get("ltm_adj_ebitda_margin"))}</span><br>
-                    <span style="font-size:10px;color:{SLATE};">EBITDA Mgn</span>
-                </div>
-                <div>
-                    <span style="font-size:13px;font-weight:700;color:{rev_color};">
-                        {yoy_str}</span><br>
-                    <span style="font-size:10px;color:{SLATE};">Rev Growth</span>
-                </div>
+                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">
+                    {format_millions(row.get("ltm_revenue"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">LTM Rev</span></div>
+                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">
+                    {format_multiple(row.get("net_leverage"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">Net Lev</span></div>
+                <div><span style="font-size:13px;font-weight:700;color:{NAVY};">
+                    {format_pct(row.get("ltm_adj_ebitda_margin"))}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">EBITDA Mgn</span></div>
+                <div><span style="font-size:13px;font-weight:700;color:{rev_color};">
+                    {yoy_str}</span><br>
+                    <span style="font-size:10px;color:{SLATE};">Rev Growth</span></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # Two buttons: Company Detail and Flags
         btn_c1, btn_c2 = col.columns(2)
-        if btn_c1.button("View Detail", key=f"detail_{cname}", use_container_width=True):
-            st.session_state["page"]         = "company_detail"
+        if btn_c1.button("View Company Detail", key=f"detail_{cname}",
+                          use_container_width=True):
+            st.session_state["page"]             = "company_detail"
             st.session_state["selected_company"] = cname
             for k in ["drill_page", "drill_company", "drill_metric"]:
                 st.session_state.pop(k, None)
             st.rerun()
-        if btn_c2.button("Alerts", key=f"alerts_{cname}", use_container_width=True):
+        if btn_c2.button("View Company Alerts", key=f"alerts_{cname}",
+                          use_container_width=True):
             st.session_state["page"]              = "flags_alerts"
             st.session_state["flag_filter_company"] = cname
             st.rerun()
@@ -1494,24 +1706,83 @@ def page_flags_alerts():
             return
 
     # -----------------------------------------------------------------------
-    # VIEW 1: Portfolio KPIs  (flag expanders — existing behaviour)
+    # VIEW 1: Portfolio KPIs
     # -----------------------------------------------------------------------
     if view_mode == "Portfolio KPIs":
 
-        def ai_flag_summary(cname: str, row) -> str:
-            """Generate a one-line AI summary for a flagged company."""
+        # Calculation methodology — collapsible reference table
+        with st.expander("Flag Calculation Methodology", expanded=False):
+            st.markdown(
+                f'<div style="font-size:12px;color:{SLATE};font-family:Arial;margin-bottom:8px;">'
+                "Each flag is calculated from LTM financials pulled from 73 Strings. "
+                "Thresholds are applied portfolio-wide and shown below."
+                "</div>",
+                unsafe_allow_html=True
+            )
+            methodology = [
+                {"Metric": "Revenue Growth (YoY)",
+                 "Calculation": "(LTM Revenue - Prior Year Revenue) / Prior Year Revenue",
+                 "Green": "> 10%", "Yellow": "0 - 10%", "Red": "< 0%"},
+                {"Metric": "EBITDA Margin",
+                 "Calculation": "LTM Adj. EBITDA / LTM Net Sales",
+                 "Green": "> 18%", "Yellow": "10 - 18%", "Red": "< 10%"},
+                {"Metric": "Net Leverage",
+                 "Calculation": "Net Debt / LTM Credit Agreement EBITDA",
+                 "Green": "< 5.0x", "Yellow": "5.0 - 6.0x", "Red": "> 6.0x"},
+                {"Metric": "Interest Coverage",
+                 "Calculation": "LTM Adj. EBITDA / LTM Cash Interest Expense",
+                 "Green": "> 3.0x", "Yellow": "2.0 - 3.0x", "Red": "< 2.0x"},
+                {"Metric": "Overall Flag",
+                 "Calculation": "Worst of the four individual flags above",
+                 "Green": "All green", "Yellow": "Any yellow, no red", "Red": "Any red flag"},
+            ]
+            meth_df = pd.DataFrame(methodology).rename(columns={
+                "Green": "🟢 Green", "Yellow": "🟡 Yellow", "Red": "🔴 Red"
+            }).set_index("Metric")
+            st.dataframe(meth_df, use_container_width=True)
+            st.caption(
+                "Net Debt = Total Gross Debt - Cash  ·  LTM = Last Twelve Months  ·  "
+                "Data source: 73 Strings API → SQL Server → CSV export"
+            )
+
+        # Flag hover definitions
+        FLAG_HOVER = {
+            "revenue_growth_flag": {
+                "label": "Revenue Growth (YoY)",
+                "calc":  "(LTM Revenue - PY Revenue) / PY Revenue",
+                "green": "> 10%", "yellow": "0-10%", "red": "< 0%",
+            },
+            "ebitda_margin_flag": {
+                "label": "EBITDA Margin",
+                "calc":  "LTM Adj. EBITDA / LTM Net Sales",
+                "green": "> 18%", "yellow": "10-18%", "red": "< 10%",
+            },
+            "net_leverage_flag": {
+                "label": "Net Leverage",
+                "calc":  "Net Debt / LTM Credit Agreement EBITDA",
+                "green": "< 5.0x", "yellow": "5.0-6.0x", "red": "> 6.0x",
+            },
+            "interest_coverage_flag": {
+                "label": "Interest Coverage",
+                "calc":  "LTM Adj. EBITDA / LTM Cash Interest Expense",
+                "green": "> 3.0x", "yellow": "2.0-3.0x", "red": "< 2.0x",
+            },
+        }
+
+        def ai_flag_summary(cname, row):
             key = f"ai_flag_summary_{cname}"
             if key in st.session_state:
                 return st.session_state[key]
             try:
                 from ai import ask_claude, build_portfolio_context
-                ctx    = build_portfolio_context()
+                ctx = build_portfolio_context()
                 prompt = (
                     f"In 1-2 sentences, explain the key driver behind {cname}'s flag status. "
                     f"Revenue growth: {format_pct(row.get('revenue_yoy'))}, "
                     f"EBITDA margin: {format_pct(row.get('ltm_adj_ebitda_margin'))}, "
-                    f"Net leverage: {format_multiple(row.get('net_leverage'))}. "
-                    f"Be specific and concise — no preamble."
+                    f"Net leverage: {format_multiple(row.get('net_leverage'))}, "
+                    f"Interest coverage: {format_multiple(row.get('interest_coverage'))}. "
+                    "Be specific and concise — no preamble."
                 )
                 summary = ask_claude(prompt, ctx, [])
                 st.session_state[key] = summary
@@ -1526,6 +1797,14 @@ def page_flags_alerts():
                 f'<div class="section-header" style="color:{color};">{title}</div>',
                 unsafe_allow_html=True
             )
+
+            FLAG_METRIC_DEFS = [
+                ("revenue_growth_flag",    "revenue_yoy",             "Rev Growth YoY",  format_pct),
+                ("ebitda_margin_flag",     "ltm_adj_ebitda_margin",   "EBITDA Margin",   format_pct),
+                ("net_leverage_flag",      "net_leverage",            "Net Leverage",    format_multiple),
+                ("interest_coverage_flag", "interest_coverage",       "Int. Coverage",   format_multiple),
+            ]
+
             for _, row in df.iterrows():
                 cname    = row["company_name"]
                 inv_year = "—"
@@ -1533,87 +1812,124 @@ def page_flags_alerts():
                     fs_row = fs[fs["company_name"] == cname]
                     if not fs_row.empty:
                         try:
-                            inv_year = str(pd.to_datetime(
-                                fs_row.iloc[0]["investment_date"]).year)
+                            inv_year = str(pd.to_datetime(fs_row.iloc[0]["investment_date"]).year)
                         except Exception:
                             pass
 
-                with st.expander(
+                exp_label = (
                     f"{flag_emoji(row['overall_flag'])}  {cname}  |  "
                     f"Acq. {inv_year}  |  "
                     f"Net Lev: {format_multiple(row.get('net_leverage'))}  |  "
                     f"Rev: {format_pct(row.get('revenue_yoy'))}  |  "
                     f"EBITDA Mgn: {format_pct(row.get('ltm_adj_ebitda_margin'))}"
-                ):
-                    # KPI metrics
-                    mc = st.columns(5)
-                    mc[0].metric("LTM Revenue",     format_millions(row.get("ltm_revenue")))
-                    mc[1].metric("LTM Adj. EBITDA", format_millions(row.get("ltm_adj_ebitda")))
-                    mc[2].metric("EBITDA Margin",   format_pct(row.get("ltm_adj_ebitda_margin")))
-                    mc[3].metric("Net Leverage",    format_multiple(row.get("net_leverage")))
-                    mc[4].metric("Rev Growth",      format_pct(row.get("revenue_yoy")))
+                )
 
-                    # Flag badges — colored
-                    fc_row = st.columns(4)
-                    for idx, (fc_label, fc_key) in enumerate([
-                        ("Revenue Growth", "revenue_growth_flag"),
-                        ("EBITDA Margin",  "ebitda_margin_flag"),
-                        ("Net Leverage",   "net_leverage_flag"),
-                        ("Int. Coverage",  "interest_coverage_flag"),
-                    ]):
-                        fval = row.get(fc_key, "") or ""
-                        fclr = {"Red": RED_FLAG, "Yellow": XANTHOUS,
+                with st.expander(exp_label):
+
+                    # --- Top row: Revenue + EBITDA absolute, then 4 flag metric cards ---
+                    top_cols = st.columns(6)
+                    top_cols[0].metric("LTM Revenue",
+                                       format_millions(row.get("ltm_revenue")))
+                    top_cols[1].metric("LTM Adj. EBITDA",
+                                       format_millions(row.get("ltm_adj_ebitda")))
+
+                    for i, (fk, vk, lbl, fmt) in enumerate(FLAG_METRIC_DEFS):
+                        fval  = str(row.get(fk, "") or "")
+                        val   = row.get(vk)
+                        fclr  = {"Red": RED_FLAG, "Yellow": XANTHOUS,
                                  "Green": SEA_GREEN}.get(fval, SLATE)
-                        fc_row[idx].markdown(
-                            f"<div style='font-size:10px;color:{SLATE};'>{fc_label}</div>"
-                            f"<div style='font-size:13px;font-weight:700;color:{fclr};'>"
-                            f"{flag_emoji(fval)} {fval}</div>",
+                        h     = FLAG_HOVER.get(fk, {})
+                        tip   = (
+                            h.get("label", lbl) + "\n"
+                            "Calc: " + h.get("calc", "") + "\n"
+                            "Green: " + h.get("green", "") + "  "
+                            "Yellow: " + h.get("yellow", "") + "  "
+                            "Red: " + h.get("red", "")
+                        )
+                        val_str = fmt(val) if val is not None and not pd.isna(val) else "—"
+                        top_cols[i + 2].markdown(
+                            f'<div title="{tip}" style="'
+                            f'background:white;border:1px solid {BORDER};'
+                            f'border-left:4px solid {fclr};border-radius:4px;'
+                            f'padding:8px 10px;cursor:help;">'
+                            f'<div style="font-size:18px;font-weight:700;'
+                            f'color:{fclr};font-family:Arial;">{val_str}</div>'
+                            f'<div style="font-size:10px;color:{SLATE};'
+                            f'font-family:Arial;margin-top:2px;">{lbl}</div>'
+                            f'<div style="font-size:9px;color:{fclr};'
+                            f'font-family:Arial;font-weight:600;">'
+                            f'{flag_emoji(fval)} {fval}</div>'
+                            f'</div>',
                             unsafe_allow_html=True
                         )
 
-                    # AI Summary
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # --- Macro & News inline ---
+                    with st.expander("Macro & News", expanded=False):
+                        try:
+                            from db import load_news
+                            news_df = load_news(cname)
+                            if news_df is not None and not news_df.empty:
+                                for _, nrow in news_df.head(3).iterrows():
+                                    pub   = str(nrow.get("published", ""))[:10]
+                                    ntitle = nrow.get("title", "")
+                                    link  = nrow.get("link", "#")
+                                    src   = nrow.get("source", "")
+                                    st.markdown(
+                                        f"**[{ntitle}]({link})**  \n"
+                                        f'<span style="font-size:10px;color:{SLATE};">'
+                                        f"{src} · {pub}</span>",
+                                        unsafe_allow_html=True
+                                    )
+                            else:
+                                st.caption("No recent news. Run news_pipeline.py to fetch articles.")
+                        except Exception:
+                            st.caption("News unavailable.")
+
+                    # --- AI Summary ---
                     ai_col, btn_col = st.columns([4, 1])
                     with btn_col:
                         if st.button("AI Summary", key=f"ai_sum_{cname}",
-                                      use_container_width=True):
+                                     use_container_width=True):
                             with st.spinner("Generating..."):
-                                # Force refresh
-                                k = f"ai_flag_summary_{cname}"
-                                st.session_state.pop(k, None)
+                                st.session_state.pop(f"ai_flag_summary_{cname}", None)
                                 ai_flag_summary(cname, row)
+                            st.rerun()
                     with ai_col:
                         summary = st.session_state.get(f"ai_flag_summary_{cname}", "")
                         if summary:
                             st.markdown(
-                                f"<div style='background:{LIGHT_BG};border-left:3px solid {SLATE};"
-                                f"padding:8px 10px;border-radius:4px;font-size:12px;"
-                                f"color:{NAVY};font-family:Arial;'>"
-                                f"<b>AI:</b> {summary}</div>",
+                                f'<div style="background:{LIGHT_BG};'
+                                f'border-left:3px solid {NAVY};padding:8px 10px;'
+                                f'border-radius:4px;font-size:12px;color:{NAVY};'
+                                f'font-family:Arial;"><b>AI:</b> {summary}</div>',
                                 unsafe_allow_html=True
                             )
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
-                    # Action buttons
+                    # --- Navigation buttons ---
                     ac = st.columns(5)
-                    if ac[0].button("View Company", key=f"goto_co_{cname}",
-                                     use_container_width=True):
+                    if ac[0].button("View Company Detail",
+                                    key=f"goto_co_{cname}",
+                                    use_container_width=True):
                         st.session_state["page"]             = "company_detail"
                         st.session_state["selected_company"] = cname
                         st.rerun()
-                    for metric_name, btn_col in zip(
+                    for metric_name, mc_btn in zip(
                         ["Net Leverage", "EBITDA Margin", "Rev Growth", "Gross Margin"],
                         ac[1:]
                     ):
-                        if btn_col.button(metric_name,
-                                           key=f"flag_drill_{cname}_{metric_name}",
-                                           use_container_width=True):
+                        if mc_btn.button(metric_name,
+                                         key=f"flag_drill_{cname}_{metric_name}",
+                                         use_container_width=True):
                             set_drill("flags", company=cname, metric=metric_name)
                             st.rerun()
 
-        render_flag_section(red,    RED_FLAG,  "RED — Covenant or Material Breach")
-        render_flag_section(yellow, "#B7860B", "YELLOW — Watch List")
-        render_flag_section(green,  SEA_GREEN, "GREEN — Notable Outperformers")
+        render_flag_section(red,    RED_FLAG,  "🔴  RED — Covenant or Material Breach")
+        render_flag_section(yellow, "#B7860B", "🟡  YELLOW — Watch List")
+        render_flag_section(green,  SEA_GREEN, "🟢  GREEN — Notable Outperformers")
 
     # -----------------------------------------------------------------------
     # VIEW 2: Company KPIs  (from vw_portfolio_flags — detailed metrics)
