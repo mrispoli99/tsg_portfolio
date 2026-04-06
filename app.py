@@ -486,41 +486,28 @@ def render_top_nav():
                         st.session_state.pop(k, None)
                     st.rerun()
 
-    # Style nav buttons as tabs
+    # Style nav buttons as tabs — scoped to .tsg-nav-row to avoid
+    # accidentally styling buttons on other pages (e.g. SOP sidebar)
     st.markdown(f"""
     <style>
-    /* Style all nav buttons as tabs */
-    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button {{
-        border: none !important;
-        border-radius: 0 !important;
-        border-bottom: 3px solid transparent !important;
-        background: transparent !important;
-        color: {SLATE} !important;
-        font-size: 13px !important;
-        font-family: Arial, sans-serif !important;
-        font-weight: 500 !important;
-        padding: 8px 4px !important;
-        margin-bottom: -2px !important;
+    .tsg-nav-row {{ background:white; border-bottom:2px solid {BORDER}; padding:0 8px; gap:0; }}
+    .tsg-nav-row button {{
+        border:none !important; border-radius:0 !important;
+        border-bottom:3px solid transparent !important;
+        background:transparent !important; color:{SLATE} !important;
+        font-size:13px !important; font-family:Arial,sans-serif !important;
+        font-weight:500 !important; padding:8px 4px !important; margin-bottom:-2px !important;
     }}
-    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button:hover {{
-        color: {NAVY} !important;
-        border-bottom-color: {SKY} !important;
-        background: transparent !important;
+    .tsg-nav-row button:hover {{
+        color:{NAVY} !important; border-bottom-color:{SKY} !important; background:transparent !important;
     }}
-    div[data-testid="stHorizontalBlock"]:nth-of-type(1) button[kind="primary"] {{
-        color: {NAVY} !important;
-        font-weight: 700 !important;
-        border-bottom: 3px solid {NAVY} !important;
-        background: transparent !important;
-    }}
-    div[data-testid="stHorizontalBlock"]:nth-of-type(1) {{
-        background: white !important;
-        border-bottom: 2px solid {BORDER} !important;
-        padding: 0 8px !important;
-        gap: 0 !important;
+    .tsg-nav-row button[kind="primary"] {{
+        color:{NAVY} !important; font-weight:700 !important;
+        border-bottom:3px solid {NAVY} !important; background:transparent !important;
     }}
     </style>
     """, unsafe_allow_html=True)
+    st.markdown('<div class="tsg-nav-row">', unsafe_allow_html=True)
 
 
 def render_page_header(title: str):
@@ -2353,6 +2340,9 @@ def main():
             page_portfolio_flags()
         elif page == "ai_analyst":
             page_portfolio_ai()
+        elif page == "sop_training":
+            from page_sop import page_sop
+            page_sop()
         elif page == "export_ppt":
             from export_ppt import page_export
             page_export()
