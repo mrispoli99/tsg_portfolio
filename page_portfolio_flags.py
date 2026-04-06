@@ -334,23 +334,60 @@ def render_company_scorecard(row: pd.Series):
                     unsafe_allow_html=True)
 
     # Flag grid
+    # (metric_label, flag_col, val_col, fmt_fn, threshold_explanation, calculation)
     flag_items = [
-        ("Net Debt / EBITDA",       "flag_net_leverage",      "net_leverage",            lambda x: f"{x:.1f}x"),
-        ("Gross Debt / EBITDA",     "flag_gross_leverage",    "gross_leverage",           lambda x: f"{x:.1f}x"),
-        ("Sr. Secured / EBITDA",    "flag_senior_secured",    "senior_secured_leverage",  lambda x: f"{x:.1f}x"),
-        ("Interest Coverage",       "flag_interest_coverage", "interest_coverage",        lambda x: f"{x:.1f}x"),
-        ("Debt Service Coverage",   "flag_debt_service",      "debt_service_coverage",    lambda x: f"{x:.1f}x"),
-        ("Free Cash Flow",          "flag_free_cash_flow",    "free_cash_flow",           lambda x: f"${x:.1f}M"),
-        ("EBITDA Margin",           "flag_ebitda_margin",     "ebitda_margin",            lambda x: f"{x*100:.1f}%"),
-        ("TEV / Revenue",           "flag_tev_revenue",       "tev_to_revenue",           lambda x: f"{x:.1f}x"),
-        ("TEV / EBITDA",            "flag_tev_ebitda",        "tev_to_ebitda",            lambda x: f"{x:.1f}x"),
-        ("MOIC",                    "flag_moic",              "gross_moi",                lambda x: f"{x:.2f}x"),
-        ("Cash / Gross Debt",       "flag_cash_to_debt",      "cash_to_debt",             lambda x: f"{x*100:.1f}%"),
-        ("Floating Rate Debt %",    "flag_floating_rate",     "floating_rate_pct",        lambda x: f"{x*100:.1f}%"),
+        ("Net Debt / EBITDA",     "flag_net_leverage",      "net_leverage",
+         lambda x: f"{x:.1f}x",
+         "Best <2x · Green 2–4x · Yellow 4–6x · Red >6x",
+         "Net Debt ÷ LTM Credit Agreement EBITDA"),
+        ("Gross Debt / EBITDA",   "flag_gross_leverage",    "gross_leverage",
+         lambda x: f"{x:.1f}x",
+         "Best <3x · Green 3–5x · Yellow 5–7x · Red >7x",
+         "Total Gross Debt ÷ LTM Credit Agreement EBITDA"),
+        ("Sr. Secured / EBITDA",  "flag_senior_secured",    "senior_secured_leverage",
+         lambda x: f"{x:.1f}x",
+         "Best <2x · Green 2–3.5x · Yellow 3.5–5x · Red >5x",
+         "Senior Secured Debt ÷ LTM EBITDA"),
+        ("Interest Coverage",     "flag_interest_coverage", "interest_coverage",
+         lambda x: f"{x:.1f}x",
+         "Best >4x · Green 2.5–4x · Yellow 1.5–2.5x · Red <1.5x",
+         "LTM Adj. EBITDA ÷ LTM Cash Interest Expense"),
+        ("Debt Service Coverage", "flag_debt_service",      "debt_service_coverage",
+         lambda x: f"{x:.1f}x",
+         "Best >2.5x · Green 1.8–2.5x · Yellow 1.2–1.8x · Red <1.2x",
+         "(LTM EBITDA − Capex) ÷ (Interest + Principal)"),
+        ("Free Cash Flow",        "flag_free_cash_flow",    "free_cash_flow",
+         lambda x: f"${x:.1f}M",
+         "Best strong+ · Green positive · Yellow ~0 · Red <0",
+         "LTM EBITDA − Capex − ΔNWC − Cash Taxes"),
+        ("EBITDA Margin",         "flag_ebitda_margin",     "ebitda_margin",
+         lambda x: f"{x*100:.1f}%",
+         "Best >30% · Green 20–30% · Yellow 10–20% · Red <10%",
+         "LTM Adj. EBITDA ÷ LTM Net Sales"),
+        ("TEV / Revenue",         "flag_tev_revenue",       "tev_to_revenue",
+         lambda x: f"{x:.1f}x",
+         "Best <1.5x · Green 1.5–3x · Yellow 3–5x · Red >5x",
+         "Total Enterprise Value ÷ LTM Net Sales"),
+        ("TEV / EBITDA",          "flag_tev_ebitda",        "tev_to_ebitda",
+         lambda x: f"{x:.1f}x",
+         "Best <6x · Green 6–10x · Yellow 10–16x · Red >16x",
+         "Total Enterprise Value ÷ LTM EBITDA"),
+        ("MOIC",                  "flag_moic",              "gross_moi",
+         lambda x: f"{x:.2f}x",
+         "Best >2.5x · Green 1.5–2.5x · Yellow 1–1.5x · Red <1x",
+         "(Realized + Unrealized Value) ÷ Total Cost"),
+        ("Cash / Gross Debt",     "flag_cash_to_debt",      "cash_to_debt",
+         lambda x: f"{x*100:.1f}%",
+         "Best >20% · Green 10–20% · Yellow 5–10% · Red <5%",
+         "Cash ÷ Total Gross Debt"),
+        ("Floating Rate %",       "flag_floating_rate",     "floating_rate_pct",
+         lambda x: f"{x*100:.1f}%",
+         "Best <20% · Green 20–50% · Yellow 50–80% · Red >80%",
+         "Floating Rate Debt ÷ Total Gross Debt"),
     ]
 
     cols = st.columns(4)
-    for i, (label, flag_col, val_col, fmt) in enumerate(flag_items):
+    for i, (label, flag_col, val_col, fmt, threshold, calc) in enumerate(flag_items):
         col   = cols[i % 4]
         flag  = row.get(flag_col, "N/A") or "N/A"
         val   = row.get(val_col)
@@ -359,11 +396,14 @@ def render_company_scorecard(row: pd.Series):
 
         col.markdown(f"""
         <div style="background:white;border:1px solid {BORDER};border-left:4px solid {color};
-                    border-radius:4px;padding:10px 12px;margin-bottom:8px;">
+                    border-radius:4px;padding:10px 12px;margin-bottom:8px;"
+             title="Calculation: {calc}&#10;Thresholds: {threshold}">
             <div style="font-size:18px;font-weight:700;color:{color};font-family:Arial;">
                 {val_str}</div>
             <div style="font-size:10px;color:{SLATE};font-family:Arial;margin-top:2px;">
                 {label}</div>
+            <div style="font-size:9px;color:#999;font-family:Arial;margin-top:1px;
+                        font-style:italic;">{threshold.split(" · ")[0]}</div>
             <div style="margin-top:4px;">{flag_badge_html(flag)}</div>
         </div>
         """, unsafe_allow_html=True)

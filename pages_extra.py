@@ -202,12 +202,14 @@ def render_news_section(company_name: str):
 
     try:
         news_df = load_news(company_name)
-    except Exception:
-        st.info("News table not yet created. Run news_schema.sql and then news_pipeline.py.")
+    except Exception as exc:
+        st.info(f"News not available: {exc}")
         return
 
-    if news_df.empty:
-        st.info(f"No recent news found for {company_name}. Run news_pipeline.py to fetch articles.")
+    if news_df is None or (hasattr(news_df, "empty") and news_df.empty):
+        st.info(f"No recent news found for {company_name}.")
+        st.caption("To enable news: run news_pipeline.py on your VM, "
+                   "then re-export CSVs with export_to_csv.py.")
         return
 
     for _, row in news_df.iterrows():
@@ -240,6 +242,30 @@ def render_news_section(company_name: str):
 # Income Statement Drill-Down (Company Detail)
 # ---------------------------------------------------------------------------
 
+# Flag threshold explanations for Income Statement hover tooltips
+IS_FLAG_RULES = {
+    "Revenue":      ("🟢 >10% YoY growth", "🟡 0–10% growth", "🔴 Negative growth"),
+    "EBITDA":       ("🟢 >10% YoY growth", "🟡 0–10% growth", "🔴 Declining"),
+    "Gross Profit": ("🟢 >10% YoY growth", "🟡 0–10% growth", "🔴 Declining"),
+    "default":      ("🟢 Improved >10%",   "🟡 Changed 0–10%", "🔴 Declined >10%"),
+}
+
+
+def _is_flag(delta_pct, attr_name: str) -> tuple:
+    """Return (emoji, explanation) for an IS line item delta."""
+    if delta_pct is None:
+        return "⚪", "Insufficient data for comparison"
+    rules = IS_FLAG_RULES.get(attr_name, IS_FLAG_RULES["default"])
+    if delta_pct > 0.10:
+        return "🟢", rules[0]
+    elif delta_pct >= 0:
+        return "🟡", rules[1]
+    elif delta_pct >= -0.10:
+        return "🟡", rules[2]
+    else:
+        return "🔴", rules[2]
+
+
 def render_income_statement(company_name: str):
     st.markdown('<div class="section-header">Income Statement — LTM vs Prior Year</div>',
                 unsafe_allow_html=True)
@@ -250,7 +276,8 @@ def render_income_statement(company_name: str):
         st.info("No income statement data available for this company.")
         return
 
-    # Display by tag group
+    st.caption("Flags compare LTM vs prior year. 🟢 Improved >10% · 🟡 Changed 0–10% · 🔴 Declined >10% · Hover 'Flag' column for detail.")
+
     for tag in IS_TAG_ORDER:
         tag_df = df[df["tag"] == tag].copy()
         if tag_df.empty:
@@ -258,38 +285,39 @@ def render_income_statement(company_name: str):
 
         with st.expander(f"**{tag}**", expanded=(tag == "Income Statement")):
             rows = []
+            tooltips = []
             for _, row in tag_df.iterrows():
-                ltm = row["ltm_value"]
-                py  = row["py_value"]
-                delta = row["delta"]
+                ltm       = row["ltm_value"]
+                py        = row["py_value"]
+                delta     = row["delta"]
                 delta_pct = row["delta_pct"]
+                attr      = str(row["attribute_name"])
 
-                # Flag delta
-                if delta_pct is not None:
-                    if delta_pct > 0.10:
-                        flag = "🟢"
-                    elif delta_pct > 0:
-                        flag = "🟡"
-                    elif delta_pct > -0.10:
-                        flag = "🟡"
-                    else:
-                        flag = "🔴"
-                else:
-                    flag = "⚪"
+                flag_emoji_str, flag_explanation = _is_flag(delta_pct, attr)
+                tooltips.append(flag_explanation)
 
                 rows.append({
-                    "Line Item":    row["attribute_name"],
-                    "LTM ($M)":     f"{ltm:,.1f}" if ltm is not None else "—",
-                    "PY ($M)":      f"{py:,.1f}"  if py  is not None else "—",
-                    "Δ $M":         f"{delta:+,.1f}" if delta is not None else "—",
-                    "Δ %":          f"{delta_pct*100:+.1f}%" if delta_pct is not None else "—",
-                    "Flag":         flag,
+                    "Line Item": attr,
+                    "LTM ($M)":  f"{ltm:,.1f}" if ltm is not None else "—",
+                    "PY ($M)":   f"{py:,.1f}"  if py  is not None else "—",
+                    "Δ $M":      f"{delta:+,.1f}" if delta is not None else "—",
+                    "Δ %":       f"{delta_pct*100:+.1f}%" if delta_pct is not None else "—",
+                    "Flag":      flag_emoji_str,
+                    "Flag Meaning": flag_explanation,
                 })
 
             display_df = pd.DataFrame(rows)
-            st.dataframe(display_df.set_index("Line Item"),
-                         use_container_width=True,
-                         height=min(400, len(rows) * 38 + 40))
+
+            def color_flag_is(val):
+                if "🟢" in str(val): return f"color: {SEA_GREEN}; font-weight: 700"
+                if "🟡" in str(val): return f"color: #B7860B; font-weight: 700"
+                if "🔴" in str(val): return f"color: {RED_FLAG}; font-weight: 700"
+                return ""
+
+            styled = (display_df.set_index("Line Item")
+                                 .style.map(color_flag_is, subset=["Flag"]))
+            st.dataframe(styled, use_container_width=True,
+                         height=min(450, len(rows) * 38 + 40))
 
 
 # ---------------------------------------------------------------------------
@@ -386,8 +414,8 @@ def page_company_detail_enhanced():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Sub-tabs within company detail
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "Financials", "Income Statement", "Alerts", "News", "AI Analyst", "Overview"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Financials", "Income Statement", "Alerts", "Macro & News", "Overview"
     ])
 
     with tab1:
@@ -474,62 +502,74 @@ def page_company_detail_enhanced():
     with tab3:
         st.markdown('<div class="section-header">Credit & Performance Flag Scorecard</div>',
                     unsafe_allow_html=True)
+
+        # Threshold explanations — shown as hover context
+        ALERT_THRESHOLDS = {
+            "Net Debt / EBITDA":      ("< 2.0x",  "2.0–4.0x",  "4.0–6.0x",  "> 6.0x",  "Net Debt ÷ LTM Credit Agreement EBITDA"),
+            "Gross Debt / EBITDA":    ("< 3.0x",  "3.0–5.0x",  "5.0–7.0x",  "> 7.0x",  "Total Gross Debt ÷ LTM Credit Agreement EBITDA"),
+            "Sr. Secured / EBITDA":   ("< 2.0x",  "2.0–3.5x",  "3.5–5.0x",  "> 5.0x",  "Senior Secured Debt ÷ LTM EBITDA"),
+            "Interest Coverage":      ("> 4.0x",  "2.5–4.0x",  "1.5–2.5x",  "< 1.5x",  "LTM Adj. EBITDA ÷ LTM Cash Interest Expense"),
+            "Debt Service Coverage":  ("> 2.5x",  "1.8–2.5x",  "1.2–1.8x",  "< 1.2x",  "(LTM EBITDA − Capex) ÷ (Interest + Principal)"),
+            "Free Cash Flow":         ("Strong+", "Positive",  "0–Slight−", "< 0",     "LTM EBITDA − Capex − ΔNWC − Cash Taxes"),
+            "EBITDA Margin":          ("> 30%",   "20–30%",    "10–20%",    "< 10%",   "LTM Adj. EBITDA ÷ LTM Net Sales"),
+            "TEV / Revenue":          ("< 1.5x",  "1.5–3.0x",  "3.0–5.0x",  "> 5.0x",  "Total Enterprise Value ÷ LTM Net Sales"),
+            "TEV / EBITDA":           ("< 6.0x",  "6.0–10.0x", "10.0–16.0x","> 16.0x", "Total Enterprise Value ÷ LTM EBITDA"),
+            "MOIC":                   ("> 2.5x",  "1.5–2.5x",  "1.0–1.5x",  "< 1.0x",  "(Realized + Unrealized Value) ÷ Total Cost"),
+            "Cash / Gross Debt":      ("> 20%",   "10–20%",    "5–10%",     "< 5%",    "Cash ÷ Total Gross Debt"),
+            "Floating Rate Debt %":   ("< 20%",   "20–50%",    "50–80%",    "> 80%",   "Floating Rate Debt ÷ Total Gross Debt"),
+        }
+
+        with st.expander("Flag Thresholds & Calculation Methodology", expanded=False):
+            thresh_rows = []
+            for metric, (best, green, yellow, red, calc) in ALERT_THRESHOLDS.items():
+                thresh_rows.append({
+                    "Metric":      metric,
+                    "Calculation": calc,
+                    "⭐ Best":     best,
+                    "🟢 Green":    green,
+                    "🟡 Yellow":   yellow,
+                    "🔴 Red":      red,
+                })
+            st.dataframe(pd.DataFrame(thresh_rows).set_index("Metric"),
+                         use_container_width=True)
+
         try:
-            from page_portfolio_flags import render_company_scorecard, load_portfolio_flags
-            flags_df = load_portfolio_flags()
+            from db import load_portfolio_flags
+            from page_portfolio_flags import render_company_scorecard
+            flags_df    = load_portfolio_flags()
             company_row = flags_df[flags_df["company_name"] == selected]
-            if not company_row.empty:
+            if not flags_df.empty and not company_row.empty:
                 render_company_scorecard(company_row.iloc[0])
+            elif flags_df.empty:
+                st.info("portfolio_flags.csv not found. Run export_to_csv.py to generate it.")
             else:
-                st.info("Run vw_portfolio_flags.sql in SSMS to enable credit flags.")
+                st.info(f"No flag data found for {selected}.")
         except Exception as exc:
-            st.info(f"Credit flags not available: {exc}")
+            st.warning(f"Could not load flag scorecard: {exc}")
 
     with tab4:
-        render_news_section(selected)
+        st.markdown('<div class="section-header">Macro & News</div>',
+                    unsafe_allow_html=True)
+        # Macro context placeholder
+        macro_sector = info_row.get("client_sector", "") if info_row is not None else ""
+        if macro_sector:
+            st.markdown(f"""
+            <div style="background:{LIGHT_BG}; border-left:3px solid {SLATE};
+                        border-radius:4px; padding:10px 14px; margin-bottom:12px;
+                        font-size:12px; color:{NAVY}; font-family:Arial;">
+                <b>Sector:</b> {macro_sector} —
+                Macro data integration (CapIQ comps, sector benchmarks) coming soon.
+            </div>
+            """, unsafe_allow_html=True)
+        try:
+            render_news_section(selected)
+        except Exception as exc:
+            st.info(f"News not available: {exc}")
 
     with tab5:
-        st.markdown('<div class="section-header">AI Analyst</div>',
-                    unsafe_allow_html=True)
-
-        chat_key = f"chat_v2_{selected}"
-        if chat_key not in st.session_state:
-            st.session_state[chat_key] = []
-
-        context = build_company_context_with_news(selected)
-
-        prompts = [
-            f"Summarize {selected}'s performance in 3 bullet points",
-            f"What are the key risks for {selected}?",
-            f"Write a board memo update for {selected}",
-            f"How does recent news affect the outlook for {selected}?",
-        ]
-        cols = st.columns(4)
-        for col, prompt in zip(cols, prompts):
-            if col.button(prompt, key=f"v2_prompt_{prompt[:20]}", use_container_width=True):
-                st.session_state[chat_key].append({"role": "user", "content": prompt})
-                with st.spinner("Analysing..."):
-                    response = ask_claude(prompt, context, st.session_state[chat_key][:-1])
-                st.session_state[chat_key].append({"role": "assistant", "content": response})
-
-        for msg in st.session_state[chat_key]:
-            if msg["role"] == "user":
-                st.markdown(f'<div class="chat-user">{msg["content"]}</div>',
-                            unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="chat-assistant">{msg["content"]}</div>',
-                            unsafe_allow_html=True)
-
-        user_input = st.chat_input(f"Ask anything about {selected}...")
-        if user_input:
-            st.session_state[chat_key].append({"role": "user", "content": user_input})
-            with st.spinner("Analysing..."):
-                response = ask_claude(user_input, context, st.session_state[chat_key][:-1])
-            st.session_state[chat_key].append({"role": "assistant", "content": response})
-            st.rerun()
-
-    with tab6:
-        if info_row is not None:
+        if info_row is None:
+            st.info("Company profile data not available in company_master.csv.")
+        elif True:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown('<div class="section-header">Company Profile</div>',
