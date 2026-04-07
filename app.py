@@ -1277,6 +1277,11 @@ def page_fund_summary():
     render_page_header("Fund Snapshot")
 
     fs = load_fund_summary()
+    try:
+        from db import load_entry_vs_current
+        evc = load_entry_vs_current()
+    except Exception:
+        evc = None
 
     if fs.empty:
         st.info("No fund data available.")
@@ -1481,89 +1486,186 @@ def page_fund_summary():
 
     # ---- TAB 2: Entry vs Current ----
     with tab_entry:
-        st.markdown('<div class="section-header">Entry vs Current EBITDA — Company Level</div>',
-                    unsafe_allow_html=True)
+        # Filter evc to match current fund summary filter
+        if evc is not None and not evc.empty:
+            evc_f = evc[evc["company_name"].isin(fs_f["company_name"])].copy()
+        else:
+            evc_f = pd.DataFrame()
 
-        entry_df = fs_f.dropna(subset=["entry_tev", "current_tev"]).copy()
-        if not entry_df.empty:
-            # Use entry EBITDA proxy: entry_tev / assumed entry multiple
-            # and current EBITDA from LTM
-            ebitda_df = entry_df.dropna(subset=["ltm_adj_ebitda"]).copy()
-            ebitda_df = ebitda_df.sort_values("ltm_adj_ebitda", ascending=True)
+        if evc_f.empty:
+            st.info("entry_vs_current.csv not found. Run export_to_csv.py on the VM.")
+        else:
+            # ---- EBITDA: Entry vs Current ----
+            st.markdown('<div class="section-header">Entry vs Current EBITDA</div>',
+                        unsafe_allow_html=True)
+            ebitda_df = evc_f.dropna(subset=["entry_adj_ebitda","current_adj_ebitda"]).copy()
+            ebitda_df = ebitda_df.sort_values("current_adj_ebitda")
+            if not ebitda_df.empty:
+                fig_ebitda = go.Figure()
+                fig_ebitda.add_trace(go.Bar(
+                    name="Entry Adj. EBITDA", x=ebitda_df["company_name"],
+                    y=ebitda_df["entry_adj_ebitda"], marker_color=SKY))
+                fig_ebitda.add_trace(go.Bar(
+                    name="Current Adj. EBITDA", x=ebitda_df["company_name"],
+                    y=ebitda_df["current_adj_ebitda"], marker_color=NAVY))
+                fig_ebitda.update_layout(
+                    height=340, plot_bgcolor="white", paper_bgcolor="white",
+                    barmode="group", margin=dict(l=0,r=0,t=10,b=0),
+                    font=dict(family="Arial",color=NAVY,size=10),
+                    legend=dict(orientation="h",y=-0.15),
+                    yaxis=dict(tickformat="$,.0f",gridcolor=BORDER),
+                    xaxis=dict(tickangle=-30))
+                st.plotly_chart(fig_ebitda, use_container_width=True)
+                # Growth callout
+                ebitda_df["ebitda_chg"] = (
+                    (ebitda_df["current_adj_ebitda"] - ebitda_df["entry_adj_ebitda"])
+                    / ebitda_df["entry_adj_ebitda"].abs()
+                )
+                cols_ebitda = st.columns(min(5, len(ebitda_df)))
+                for i, (_, row) in enumerate(ebitda_df.iterrows()):
+                    chg = row.get("ebitda_chg")
+                    clr = SEA_GREEN if chg and chg > 0 else RED_FLAG
+                    cols_ebitda[i % len(cols_ebitda)].markdown(
+                        f"<div style='text-align:center;font-size:11px;"
+                        f"font-family:Arial;color:{NAVY};'><b>{row['company_name']}</b><br>"
+                        f"<span style='color:{clr};font-weight:700;'>"
+                        f"{'▲' if chg and chg>0 else '▼'} "
+                        f"{format_pct(chg)}</span></div>",
+                        unsafe_allow_html=True)
 
-            fig_entry = go.Figure()
-            # Current EBITDA
-            fig_entry.add_trace(go.Bar(
-                name="LTM Adj. EBITDA",
-                x=ebitda_df["company_name"],
-                y=ebitda_df["ltm_adj_ebitda"],
-                marker_color=NAVY
-            ))
-            # Entry EBITDA proxy (if valuation_ltm_ebitda available)
-            if "valuation_ltm_ebitda" in ebitda_df.columns:
-                entry_ebitda = ebitda_df["valuation_ltm_ebitda"].dropna()
-                if not entry_ebitda.empty:
-                    fig_entry.add_trace(go.Bar(
-                        name="Entry EBITDA (Proxy)",
-                        x=ebitda_df["company_name"],
-                        y=ebitda_df["valuation_ltm_ebitda"],
-                        marker_color=SKY
-                    ))
-            fig_entry.update_layout(
-                height=360, plot_bgcolor="white", paper_bgcolor="white",
-                barmode="group",
-                margin=dict(l=0, r=0, t=10, b=0),
-                font=dict(family="Arial", color=NAVY, size=10),
-                legend=dict(orientation="h", y=-0.15),
-                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
-                xaxis=dict(tickangle=-30)
-            )
-            st.plotly_chart(fig_entry, use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        # Entry vs Current TEV (Debt proxy)
-        st.markdown('<div class="section-header">Entry vs Current TEV — Company Level</div>',
-                    unsafe_allow_html=True)
-        tev_comp_df = fs_f.dropna(subset=["entry_tev", "current_tev"]).sort_values(
-            "current_tev", ascending=True)
-        if not tev_comp_df.empty:
-            fig_tev2 = go.Figure()
-            fig_tev2.add_trace(go.Bar(
-                name="Entry TEV",
-                x=tev_comp_df["company_name"],
-                y=tev_comp_df["entry_tev"],
-                marker_color=SKY
-            ))
-            fig_tev2.add_trace(go.Bar(
-                name="Current TEV",
-                x=tev_comp_df["company_name"],
-                y=tev_comp_df["current_tev"],
-                marker_color=NAVY
-            ))
-            fig_tev2.update_layout(
-                height=360, plot_bgcolor="white", paper_bgcolor="white",
-                barmode="group",
-                margin=dict(l=0, r=0, t=10, b=0),
-                font=dict(family="Arial", color=NAVY, size=10),
-                legend=dict(orientation="h", y=-0.15),
-                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
-                xaxis=dict(tickangle=-30)
-            )
-            st.plotly_chart(fig_tev2, use_container_width=True)
+            # ---- TEV: Entry vs Current ----
+            st.markdown('<div class="section-header">Entry vs Current TEV</div>',
+                        unsafe_allow_html=True)
+            tev_df = evc_f.dropna(subset=["entry_tev","current_tev"]).sort_values("current_tev")
+            if not tev_df.empty:
+                fig_tev2 = go.Figure()
+                fig_tev2.add_trace(go.Bar(
+                    name="Entry TEV", x=tev_df["company_name"],
+                    y=tev_df["entry_tev"], marker_color=SKY))
+                fig_tev2.add_trace(go.Bar(
+                    name="Current TEV", x=tev_df["company_name"],
+                    y=tev_df["current_tev"], marker_color=NAVY))
+                fig_tev2.update_layout(
+                    height=300, plot_bgcolor="white", paper_bgcolor="white",
+                    barmode="group", margin=dict(l=0,r=0,t=10,b=0),
+                    font=dict(family="Arial",color=NAVY,size=10),
+                    legend=dict(orientation="h",y=-0.15),
+                    yaxis=dict(tickformat="$,.0f",gridcolor=BORDER),
+                    xaxis=dict(tickangle=-30))
+                st.plotly_chart(fig_tev2, use_container_width=True)
 
-        # Net Leverage: Entry vs Current (fund-level pending)
-        st.markdown('<div class="section-header">Entry vs Current Debt — Fund Level</div>',
-                    unsafe_allow_html=True)
-        st.markdown(f"""
-        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
-                    padding:24px; text-align:center;">
-            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;">
-                Fund-Level Debt: Entry vs Current
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ---- TEV Ratios: Entry vs Current ----
+            st.markdown('<div class="section-header">TEV Multiples — Entry vs Current</div>',
+                        unsafe_allow_html=True)
+            ratio_cols = st.columns(2)
+            with ratio_cols[0]:
+                st.markdown('<div class="section-header">TEV / Revenue</div>',
+                            unsafe_allow_html=True)
+                rv_df = evc_f.dropna(subset=["entry_tev_to_revenue","current_tev_to_revenue"]).copy()
+                if not rv_df.empty:
+                    fig_rv = go.Figure()
+                    fig_rv.add_trace(go.Bar(name="Entry", x=rv_df["company_name"],
+                                            y=rv_df["entry_tev_to_revenue"], marker_color=SKY))
+                    fig_rv.add_trace(go.Bar(name="Current", x=rv_df["company_name"],
+                                            y=rv_df["current_tev_to_revenue"], marker_color=NAVY))
+                    fig_rv.update_layout(height=260, plot_bgcolor="white", paper_bgcolor="white",
+                                         barmode="group", margin=dict(l=0,r=0,t=10,b=0),
+                                         font=dict(family="Arial",color=NAVY,size=10),
+                                         legend=dict(orientation="h",y=-0.2),
+                                         yaxis=dict(tickformat=".1f",ticksuffix="x",gridcolor=BORDER),
+                                         xaxis=dict(tickangle=-30))
+                    st.plotly_chart(fig_rv, use_container_width=True)
+            with ratio_cols[1]:
+                st.markdown('<div class="section-header">TEV / EBITDA</div>',
+                            unsafe_allow_html=True)
+                re_df = evc_f.dropna(subset=["entry_tev_to_ebitda","current_tev_to_ebitda"]).copy()
+                if not re_df.empty:
+                    fig_re = go.Figure()
+                    fig_re.add_trace(go.Bar(name="Entry", x=re_df["company_name"],
+                                            y=re_df["entry_tev_to_ebitda"], marker_color=SKY))
+                    fig_re.add_trace(go.Bar(name="Current", x=re_df["company_name"],
+                                            y=re_df["current_tev_to_ebitda"], marker_color=NAVY))
+                    fig_re.update_layout(height=260, plot_bgcolor="white", paper_bgcolor="white",
+                                         barmode="group", margin=dict(l=0,r=0,t=10,b=0),
+                                         font=dict(family="Arial",color=NAVY,size=10),
+                                         legend=dict(orientation="h",y=-0.2),
+                                         yaxis=dict(tickformat=".1f",ticksuffix="x",gridcolor=BORDER),
+                                         xaxis=dict(tickangle=-30))
+                    st.plotly_chart(fig_re, use_container_width=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ---- Net Leverage: Entry vs Current ----
+            st.markdown('<div class="section-header">Net Leverage — Entry vs Current</div>',
+                        unsafe_allow_html=True)
+            lev_evc = evc_f.dropna(subset=["entry_net_leverage","current_net_leverage"]).copy()
+            lev_evc = lev_evc.sort_values("current_net_leverage", ascending=False)
+            if not lev_evc.empty:
+                fig_lev_evc = go.Figure()
+                fig_lev_evc.add_trace(go.Bar(name="Entry", x=lev_evc["company_name"],
+                                              y=lev_evc["entry_net_leverage"], marker_color=SKY))
+                fig_lev_evc.add_trace(go.Bar(name="Current", x=lev_evc["company_name"],
+                                              y=lev_evc["current_net_leverage"],
+                                              marker_color=[RED_FLAG if v > 6 else XANTHOUS if v > 5 else NAVY
+                                                            for v in lev_evc["current_net_leverage"]]))
+                fig_lev_evc.add_hline(y=6.0, line_dash="dash", line_color=RED_FLAG, annotation_text="6.0x")
+                fig_lev_evc.add_hline(y=5.0, line_dash="dot",  line_color=XANTHOUS, annotation_text="5.0x")
+                fig_lev_evc.update_layout(
+                    height=300, plot_bgcolor="white", paper_bgcolor="white",
+                    barmode="group", margin=dict(l=0,r=0,t=10,b=0),
+                    font=dict(family="Arial",color=NAVY,size=10),
+                    legend=dict(orientation="h",y=-0.15),
+                    yaxis=dict(tickformat=".1f",ticksuffix="x",gridcolor=BORDER),
+                    xaxis=dict(tickangle=-30))
+                st.plotly_chart(fig_lev_evc, use_container_width=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ---- Debt Type Breakdown ----
+            st.markdown('<div class="section-header">Debt Type Breakdown (Current)</div>',
+                        unsafe_allow_html=True)
+            debt_cols = ["company_name","floating_rate_debt","fixed_rate_debt","pik_debt","other_debt","total_gross_debt"]
+            debt_avail = [c for c in debt_cols if c in evc_f.columns]
+            if len(debt_avail) > 2:
+                debt_df = evc_f[debt_avail].dropna(subset=["total_gross_debt"]).copy()
+                if not debt_df.empty:
+                    fig_debt = go.Figure()
+                    colors = {"floating_rate_debt": NAVY, "fixed_rate_debt": SLATE,
+                              "pik_debt": XANTHOUS, "other_debt": SKY}
+                    labels = {"floating_rate_debt": "Floating Rate", "fixed_rate_debt": "Fixed Rate",
+                              "pik_debt": "PIK", "other_debt": "Other"}
+                    for col in ["floating_rate_debt","fixed_rate_debt","pik_debt","other_debt"]:
+                        if col in debt_df.columns:
+                            fig_debt.add_trace(go.Bar(
+                                name=labels[col], x=debt_df["company_name"],
+                                y=debt_df[col], marker_color=colors[col]))
+                    fig_debt.update_layout(
+                        height=300, plot_bgcolor="white", paper_bgcolor="white",
+                        barmode="stack", margin=dict(l=0,r=0,t=10,b=0),
+                        font=dict(family="Arial",color=NAVY,size=10),
+                        legend=dict(orientation="h",y=-0.15),
+                        yaxis=dict(tickformat="$,.0f",gridcolor=BORDER),
+                        xaxis=dict(tickangle=-30))
+                    st.plotly_chart(fig_debt, use_container_width=True)
+            else:
+                st.caption("Fixed Rate, PIK, and Other Debt not yet collected in 73S for all companies.")
+
+            # ---- Fund-Level Debt (still pending Investran) ----
+            st.markdown(f"""
+            <div style="background:#F8F9FA;border:1px dashed #CCCCCC;border-radius:6px;
+                        padding:16px;text-align:center;">
+                <div style="font-size:12px;font-weight:700;color:#999;font-family:Arial;">
+                    Fund-Level Capital Flow (Committed → Paid-In → Distributions → NAV)
+                </div>
+                <div style="font-size:11px;color:#BBBBBB;font-family:Arial;margin-top:4px;">
+                    ** Pending Investran data
+                </div>
             </div>
-            <div style="font-size:11px; color:#BBBBBB; font-family:Arial; margin-top:6px;">
-                ** Pending Investran data — requires paid-in capital and debt at entry
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
         # Net Leverage trend by company (available from quarterly data)
         st.markdown('<div class="section-header">Net Leverage Over Time — Company Level</div>',

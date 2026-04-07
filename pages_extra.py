@@ -266,8 +266,10 @@ def _is_flag(delta_pct, attr_name: str) -> tuple:
         return "🔴", rules[2]
 
 
-def render_income_statement(company_name: str):
-    st.markdown('<div class="section-header">Income Statement — LTM vs Prior Year</div>',
+def render_income_statement(company_name: str, compare_mode: str = "Prior Year"):
+    label_map = {"Prior Year": "Prior Year", "Prior Quarter": "Prior Quarter"}
+    cmp_label = label_map.get(compare_mode, "Prior Year")
+    st.markdown(f'<div class="section-header">Income Statement — LTM vs {cmp_label}</div>',
                 unsafe_allow_html=True)
 
     df = load_income_statement_ltm(company_name)
@@ -276,7 +278,34 @@ def render_income_statement(company_name: str):
         st.info("No income statement data available for this company.")
         return
 
-    st.caption("Flags compare LTM vs prior year. 🟢 Improved >10% · 🟡 Changed 0–10% · 🔴 Declined >10% · Hover 'Flag' column for detail.")
+    # For Prior Quarter mode — shift comparison columns if available
+    if compare_mode == "Prior Quarter" and "py_value" in df.columns:
+        # Use quarterly data for QoQ comparison if possible
+        try:
+            qdf = load_quarterly(company_name)
+            if not qdf.empty:
+                qdf = qdf.sort_values("cash_flow_date")
+                # Map attribute names to quarterly columns
+                col_map = {
+                    "Revenue": "revenue", "Net Sales": "revenue",
+                    "Adj. EBITDA": "adj_ebitda", "Gross Profit": "gross_profit",
+                    "Net Leverage": "net_leverage",
+                }
+                latest  = qdf.iloc[-1]
+                prior_q = qdf.iloc[-2] if len(qdf) >= 2 else None
+                for attr, qcol in col_map.items():
+                    if prior_q is not None and qcol in qdf.columns:
+                        mask = df["attribute_name"].str.contains(attr, case=False, na=False)
+                        if mask.any():
+                            pq_val = prior_q[qcol]
+                            df.loc[mask, "py_value"] = pq_val
+                            df.loc[mask, "delta"]    = df.loc[mask, "ltm_value"] - pq_val
+                            df.loc[mask, "delta_pct"] = (
+                                df.loc[mask, "delta"] / pq_val if pq_val else None)
+        except Exception:
+            pass  # Fall back to prior year data
+
+    st.caption(f"Flags compare LTM vs {cmp_label}. 🟢 Improved >10% · 🟡 Changed 0–10% · 🔴 Declined >10%")
 
     for tag in IS_TAG_ORDER:
         tag_df = df[df["tag"] == tag].copy()
@@ -397,19 +426,45 @@ def page_company_detail_enhanced():
         </div>
         """, unsafe_allow_html=True)
 
-        # KPI strip
-        kpi_cols = st.columns(7)
-        kpis = [
-            (format_millions(flag_row.get("ltm_revenue")),        "LTM Revenue"),
-            (format_millions(flag_row.get("ltm_ebitda")),          "LTM EBITDA"),
-            (format_pct(flag_row.get("ltm_adj_ebitda_margin")),    "EBITDA Margin"),
-            (format_pct(flag_row.get("ltm_gross_margin")),         "Gross Margin"),
-            (format_multiple(flag_row.get("net_leverage")),         "Net Leverage"),
-            (format_pct(flag_row.get("revenue_yoy")),               "Rev Growth YoY"),
-            (format_pct(flag_row.get("ebitda_yoy")),                "EBITDA Growth YoY"),
+        # KPI strip — plain tiles for absolute metrics, colored flag cards for flagged metrics
+        abs_cols = st.columns(4)
+        abs_kpis = [
+            (format_millions(flag_row.get("ltm_revenue")),     "LTM Revenue"),
+            (format_millions(flag_row.get("ltm_adj_ebitda")),  "LTM EBITDA"),
+            (format_pct(flag_row.get("ltm_gross_margin")),     "Gross Margin"),
+            (format_multiple(flag_row.get("net_leverage")),    "Net Leverage"),
         ]
-        for col, (val, label) in zip(kpi_cols, kpis):
+        for col, (val, label) in zip(abs_cols, abs_kpis):
             col.markdown(kpi_card(val, label), unsafe_allow_html=True)
+
+        # Colored flag cards for the 4 flagged metrics
+        FLAG_CARD_DEFS = [
+            ("revenue_growth_flag",    "revenue_yoy",           "Rev Growth YoY",  format_pct,
+             "Green >10% · Yellow 0–10% · Red <0%",   "(LTM Rev − PY Rev) / PY Rev"),
+            ("ebitda_margin_flag",     "ltm_adj_ebitda_margin", "EBITDA Margin",   format_pct,
+             "Green >18% · Yellow 10–18% · Red <10%", "LTM Adj. EBITDA / LTM Net Sales"),
+            ("net_leverage_flag",      "net_leverage",          "Net Leverage",    format_multiple,
+             "Green <5x · Yellow 5–6x · Red >6x",     "Net Debt / LTM Credit Agreement EBITDA"),
+            ("interest_coverage_flag", "interest_coverage",     "Int. Coverage",   format_multiple,
+             "Green >3x · Yellow 2–3x · Red <2x",     "LTM Adj. EBITDA / LTM Cash Interest"),
+        ]
+        flag_card_cols = st.columns(4)
+        for col, (fk, vk, lbl, fmt, thresh, calc) in zip(flag_card_cols, FLAG_CARD_DEFS):
+            fval    = str(flag_row.get(fk, "") or "")
+            val     = flag_row.get(vk)
+            fclr    = {"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN}.get(fval, SLATE)
+            val_str = fmt(val) if val is not None and not pd.isna(val) else "—"
+            tip     = f"{lbl}\nCalc: {calc}\nThresholds: {thresh}"
+            col.markdown(
+                f'<div title="{tip}" style="background:white;border:1px solid {BORDER};' 
+                f'border-left:4px solid {fclr};border-radius:4px;padding:8px 10px;cursor:help;">' 
+                f'<div style="font-size:18px;font-weight:700;color:{fclr};font-family:Arial;">{val_str}</div>' 
+                f'<div style="font-size:10px;color:{SLATE};font-family:Arial;margin-top:2px;">{lbl}</div>' 
+                f'<div style="font-size:9px;color:{fclr};font-family:Arial;font-weight:600;">' 
+                f'{flag_emoji(fval)} {fval}</div>' 
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -497,7 +552,14 @@ def page_company_detail_enhanced():
                     st.plotly_chart(fig4, use_container_width=True)
 
     with tab2:
-        render_income_statement(selected)
+        # Comparison period toggle
+        cmp_cols = st.columns([3, 1])
+        with cmp_cols[1]:
+            cmp_period = st.radio("Compare vs.", ["Prior Year", "Prior Quarter"],
+                                   horizontal=False, key="cd_is_comparison",
+                                   label_visibility="visible")
+        with cmp_cols[0]:
+            render_income_statement(selected, compare_mode=cmp_period)
 
     with tab3:
         st.markdown('<div class="section-header">Credit & Performance Flag Scorecard</div>',
@@ -592,17 +654,26 @@ def page_company_detail_enhanced():
             with c2:
                 st.markdown('<div class="section-header">Governance</div>',
                             unsafe_allow_html=True)
+                def fmt_pct_val(v):
+                    try: return f"{float(v)*100:.1f}%" if v and str(v) not in ("None","nan","") else None
+                    except: return str(v) if v else None
+
                 gov_fields = [
-                    ("Security Type",    info_row.get("security_type")),
-                    ("Ownership",        info_row.get("ownership_structure")),
-                    ("Board Seats",      info_row.get("board_seats")),
-                    ("Cov-Lite",         info_row.get("cov_lite")),
-                    ("Covenant Details", info_row.get("cov_lite_description")),
-                    ("Funds",            info_row.get("funds")),
-                    ("Restricted List",  info_row.get("restricted_list")),
-                    ("Info Rights",      info_row.get("information_rights")),
-                    ("Exit Type",        info_row.get("exit_type")),
-                    ("Valuation Method", info_row.get("valuation_methodology")),
+                    ("Security Type",         info_row.get("security_type")),
+                    ("Ownership",             info_row.get("ownership_structure")),
+                    ("Fund Ownership (Entry)",fmt_pct_val(info_row.get("fund_ownership_entry_pct"))),
+                    ("Fund Ownership (Current)",fmt_pct_val(info_row.get("fund_current_ownership_pct"))),
+                    ("TSG Controlled (Entry)",fmt_pct_val(info_row.get("tsg_controlled_entry_pct"))),
+                    ("Board Seats",           info_row.get("board_seats")),
+                    ("Cov-Lite",              info_row.get("cov_lite")),
+                    ("Covenant Details",      info_row.get("cov_lite_description")),
+                    ("Funds",                 info_row.get("funds")),
+                    ("FX to USD (Entry)",     info_row.get("fx_to_usd_entry")),
+                    ("FX to USD (Current)",   info_row.get("fx_to_usd_current")),
+                    ("Restricted List",       info_row.get("restricted_list")),
+                    ("Info Rights",           info_row.get("information_rights")),
+                    ("Exit Type",             info_row.get("exit_type")),
+                    ("Valuation Method",      info_row.get("valuation_methodology")),
                 ]
                 for label, val in gov_fields:
                     if val and str(val) not in ("None", "nan", ""):
