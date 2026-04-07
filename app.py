@@ -857,10 +857,13 @@ def page_portfolio_overview():
         # ----------------------------------------------------------------
         # KPI definitions
         # ----------------------------------------------------------------
+        # q_col = column in quarterly data (or "FLAGS:col" to pull from flags_filtered)
+        # For YoY growth, we use flags_filtered.revenue_yoy since quarterly
+        # data has raw revenue dollars, not growth rates.
         KPI_DEFS = [
             # (label, q_col, flag_col, fmt_fn, is_pct, category)
             ("LTM Revenue",      "revenue",               None,                    format_millions, False, "Revenue"),
-            ("Rev Growth (YoY)", "revenue",               "revenue_growth_flag",   format_pct,      True,  "Revenue"),
+            ("Rev Growth (YoY)", "FLAGS:revenue_yoy",     "revenue_growth_flag",   format_pct,      True,  "Revenue"),
             ("LTM Adj. EBITDA",  "adj_ebitda",            None,                    format_millions, False, "EBITDA"),
             ("EBITDA Margin",    "adj_ebitda_margin_pct", "ebitda_margin_flag",    format_pct,      True,  "EBITDA"),
             ("Gross Profit",     "gross_profit",          None,                    format_millions, False, "Margin"),
@@ -937,16 +940,15 @@ def page_portfolio_overview():
             for lbl, q_col, flag_col, fmt, is_pct, cat in KPI_DEFS:
                 row = {"KPI": lbl}
                 for cname in companies_ord:
-                    co = q_latest[q_latest["company_name"] == cname]
-                    if co.empty or q_col not in co.columns:
-                        row[cname] = "—"
-                        continue
-                    val = co.iloc[0][q_col]
-                    if "YoY" in lbl and flag_col == "revenue_growth_flag":
+                    # Handle FLAGS: prefix — pull from flags_filtered not quarterly
+                    if q_col.startswith("FLAGS:"):
+                        flags_col = q_col[6:]
                         fl = flags_filtered[flags_filtered["company_name"] == cname]
-                        if not fl.empty and "revenue_yoy" in fl.columns:
-                            val = fl.iloc[0]["revenue_yoy"]
-                    row[cname]              = fmt(val) if val is not None and not pd.isna(val) else "—"
+                        val = fl.iloc[0][flags_col]                               if not fl.empty and flags_col in fl.columns else None
+                    else:
+                        co  = q_latest[q_latest["company_name"] == cname]
+                        val = co.iloc[0][q_col]                               if not co.empty and q_col in co.columns else None
+                    row[cname] = fmt(val) if val is not None and not pd.isna(val) else "—"
                     if flag_col:
                         fl = flags_filtered[flags_filtered["company_name"] == cname]
                         if not fl.empty and flag_col in fl.columns:
@@ -994,19 +996,65 @@ def page_portfolio_overview():
             unsafe_allow_html=True
         )
 
-        if not q_filt.empty and sel_col in q_filt.columns:
+        # For FLAGS: columns, use flags_filtered (single value per company, no trend)
+        is_flags_col = sel_col.startswith("FLAGS:")
+        actual_col   = sel_col[6:] if is_flags_col else sel_col
+
+        if is_flags_col:
+            # Build a simple bar chart from flags snapshot (no time series available)
+            flag_snap = flags_filtered[["company_name", actual_col]].dropna(subset=[actual_col]).copy()
+            flag_snap = flag_snap.sort_values(actual_col)
+            if not flag_snap.empty:
+                fig_drill = go.Figure(go.Bar(
+                    x=flag_snap[actual_col],
+                    y=flag_snap["company_name"],
+                    orientation="h",
+                    marker_color=[SEA_GREEN if v > 0.10 else XANTHOUS if v > 0 else RED_FLAG
+                                  for v in flag_snap[actual_col]],
+                    text=flag_snap[actual_col].apply(format_pct),
+                    textposition="outside"
+                ))
+                fig_drill.update_layout(
+                    height=max(300, len(flag_snap) * 30),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=".0%", gridcolor=BORDER),
+                    title_text="LTM YoY — snapshot (no time series available for growth rates)"
+                )
+                st.plotly_chart(fig_drill, use_container_width=True)
+                st.caption("Rev Growth (YoY) is a point-in-time LTM calculation — time-series trend not available.")
+
+                # Simple latest table
+                flag_snap_disp = flag_snap.copy()
+                flag_snap_disp[actual_col] = flag_snap_disp[actual_col].apply(format_pct)
+                flag_snap_disp = flag_snap_disp.rename(columns={"company_name":"Company", actual_col:"Rev Growth (YoY)"})
+                st.dataframe(flag_snap_disp.set_index("Company"), use_container_width=True)
+
+                st.caption("Click a company to open its detail page:")
+                nav_btns2 = st.columns(min(6, max(1, len(flag_snap))))
+                for i, cname in enumerate(flag_snap["company_name"].tolist()):
+                    if nav_btns2[i % len(nav_btns2)].button(
+                        cname, key=f"is_goto_flags_{cname}", use_container_width=True
+                    ):
+                        st.session_state["page"]             = "company_detail"
+                        st.session_state["selected_company"] = cname
+                        st.rerun()
+
+        elif not q_filt.empty and actual_col in q_filt.columns:
             kpi_df = q_filt[["company_name","period_label","cash_flow_date",
-                              sel_col]].dropna(subset=[sel_col]).copy()
+                              actual_col]].dropna(subset=[actual_col]).copy()
 
             # Apply monthly relabelling if needed
             if period_mode == "Monthly":
                 kpi_df["period_label"] = pd.to_datetime(
                     kpi_df["cash_flow_date"], errors="coerce").dt.strftime("%b %Y")
             kpi_df = kpi_df.sort_values("cash_flow_date")
+            sel_col = actual_col  # use actual col for rest of block
 
             # Trend line chart
             fig_drill = px.line(
-                kpi_df, x="period_label", y=sel_col,
+                kpi_df, x="period_label", y=actual_col,
                 color="company_name",
                 color_discrete_sequence=COMPANY_COLORS,
                 markers=True,
@@ -1031,10 +1079,10 @@ def page_portfolio_overview():
                 unsafe_allow_html=True
             )
             latest_v = (kpi_df.groupby("company_name")
-                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-1][sel_col])
+                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-1][actual_col])
                                .reset_index(name="Latest"))
             prior_v  = (kpi_df.groupby("company_name")
-                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-2][sel_col]
+                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-2][actual_col]
                                       if len(x) >= 2 else None)
                                .reset_index(name="Prior"))
             cmp = latest_v.merge(prior_v, on="company_name")
@@ -1072,8 +1120,6 @@ def page_portfolio_overview():
                     st.session_state["selected_company"] = cname
                     st.rerun()
 
-        else:
-            st.info("No quarterly data available for this KPI.")
 
     # ---- TAB 3: Valuation Charts (moved from Fund Summary) ----
     with po_tab3:
