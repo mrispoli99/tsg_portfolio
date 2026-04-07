@@ -22,11 +22,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
-from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
+# pptx imported lazily inside page_export() to avoid
+# crashing the whole app if python-pptx is not installed
 import streamlit as st
 
 from db import (
@@ -562,6 +559,26 @@ def build_deck(include_companies: list = None) -> bytes:
 # ---------------------------------------------------------------------------
 
 def page_export():
+    # Lazy imports — only fail here if packages missing, not at app startup
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt, Emu
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches, Pt
+    except ImportError:
+        st.error(
+            "**python-pptx** is not installed. Add `python-pptx>=0.6.21` "
+            "to `requirements.txt` and redeploy."
+        )
+        return
+    try:
+        import kaleido  # noqa — needed for plotly image export
+    except ImportError:
+        st.warning(
+            "**kaleido** is not installed — chart images will be skipped in the export. "
+            "Add `kaleido` to `requirements.txt` to enable them."
+        )
     NAVY  = "#071733"
     SLATE = "#3F6680"
     SKY   = "#A8CFDE"
