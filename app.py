@@ -1277,11 +1277,8 @@ def page_fund_summary():
     render_page_header("Fund Snapshot")
 
     fs = load_fund_summary()
-    try:
-        from db import load_entry_vs_current
-        evc = load_entry_vs_current()
-    except Exception:
-        evc = None
+    from db import load_entry_vs_current
+    evc = load_entry_vs_current()  # returns empty df with st.warning if missing
 
     if fs.empty:
         st.info("No fund data available.")
@@ -1492,8 +1489,10 @@ def page_fund_summary():
         else:
             evc_f = pd.DataFrame()
 
-        if evc_f.empty:
-            st.info("entry_vs_current.csv not found. Run export_to_csv.py on the VM.")
+        if evc is None or evc.empty:
+            st.info("entry_vs_current.csv not found or empty. Run export_to_csv.py on the VM and push to GitHub.")
+        elif evc_f.empty:
+            st.info("No entry vs current data for the current filter selection.")
         else:
             # ---- EBITDA: Entry vs Current ----
             st.markdown('<div class="section-header">Entry vs Current EBITDA</div>',

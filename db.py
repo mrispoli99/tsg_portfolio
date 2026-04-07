@@ -35,6 +35,10 @@ def load_fund_summary() -> pd.DataFrame:
     return _csv("fund_summary.csv")
 
 @st.cache_data
+def load_entry_vs_current() -> pd.DataFrame:
+    return _csv("entry_vs_current.csv")
+
+@st.cache_data
 def load_company_master() -> pd.DataFrame:
     return _csv("company_master.csv")
 
