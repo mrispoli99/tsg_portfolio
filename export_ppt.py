@@ -22,8 +22,24 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
-# pptx imported lazily inside page_export() to avoid
-# crashing the whole app if python-pptx is not installed
+# Guard pptx imports — if missing, module still loads but page shows error
+try:
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    PPTX_AVAILABLE = True
+except ImportError:
+    PPTX_AVAILABLE = False
+    # Stub classes so module-level constants don't crash on import
+    class RGBColor:
+        def __init__(self, *a): self._v = a
+        def __getitem__(self, i): return self._v[i]
+    class PP_ALIGN:
+        LEFT = CENTER = RIGHT = None
+    def Inches(x): return x
+    def Pt(x): return x
+    def Emu(x): return x
 import streamlit as st
 
 from db import (
@@ -559,25 +575,18 @@ def build_deck(include_companies: list = None) -> bytes:
 # ---------------------------------------------------------------------------
 
 def page_export():
-    # Lazy imports — only fail here if packages missing, not at app startup
-    try:
-        from pptx import Presentation
-        from pptx.util import Inches, Pt, Emu
-        from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN
-        from pptx.util import Inches, Pt
-    except ImportError:
+    if not PPTX_AVAILABLE:
         st.error(
-            "**python-pptx** is not installed. Add `python-pptx>=0.6.21` "
-            "to `requirements.txt` and redeploy."
+            "**python-pptx** is not installed. "
+            "Add `python-pptx>=0.6.21` to `requirements.txt` and redeploy."
         )
         return
     try:
         import kaleido  # noqa — needed for plotly image export
     except ImportError:
         st.warning(
-            "**kaleido** is not installed — chart images will be skipped in the export. "
-            "Add `kaleido` to `requirements.txt` to enable them."
+            "**kaleido** is not installed — chart images will be skipped. "
+            "Add `kaleido==0.2.1` to `requirements.txt` to enable them."
         )
     NAVY  = "#071733"
     SLATE = "#3F6680"
