@@ -664,15 +664,61 @@ def page_portfolio_overview():
     flags_filtered = flags[flags["company_name"].isin(filtered_names)] \
                      if not flags.empty else flags
 
-    # Compute KPIs from filtered set
+    # Compute KPIs from filtered set — respecting the period filter
+    # Build a period-labelled version of q_filt so we can aggregate to latest period
+    def _apply_period_label(df, mode):
+        df = df.copy()
+        df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+        if mode == "Monthly":
+            df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
+        elif mode == "Yearly":
+            df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+        else:
+            df["_plabel"] = (df["period_label"] if "period_label" in df.columns
+                             else df["cash_flow_date"].dt.to_period("Q").astype(str))
+        return df
+
+    q_period = _apply_period_label(q_filt, tab_period) if not q_filt.empty else pd.DataFrame()
+
+    # Latest period snapshot per company (for tiles + flag summary)
+    if not q_period.empty:
+        q_latest_snap = (q_period.sort_values("cash_flow_date")
+                                 .groupby("company_name").last().reset_index())
+        q_prior_snap  = (q_period.sort_values("cash_flow_date")
+                                 .groupby("company_name").nth(-2).reset_index())
+    else:
+        q_latest_snap = pd.DataFrame()
+        q_prior_snap  = pd.DataFrame()
+
+    # KPI tile values — prefer period-aware quarterly data, fall back to fs_filtered
+    def _sum_col(df, col):
+        if df.empty or col not in df.columns: return None
+        v = df[col].sum()
+        return None if pd.isna(v) or v == 0 else v
+
+    def _wavg_col(df, val_col, wt_col):
+        if df.empty or val_col not in df.columns or wt_col not in df.columns: return None
+        w = df[wt_col].fillna(0)
+        if w.sum() == 0: return None
+        return (df[val_col].fillna(0) * w).sum() / w.sum()
+
     total_tev     = fs_filtered["current_tev"].sum()    if not fs_filtered.empty else None
-    total_revenue = fs_filtered["ltm_revenue"].sum()    if not fs_filtered.empty else None
-    total_ebitda  = fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None
-    avg_leverage  = (fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum() /                     fs_filtered["current_tev"].sum()                     if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None
-    avg_margin    = fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None
+    total_revenue = (_sum_col(q_latest_snap, "revenue") or
+                     (fs_filtered["ltm_revenue"].sum() if not fs_filtered.empty else None))
+    total_ebitda  = (_sum_col(q_latest_snap, "adj_ebitda") or
+                     (fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None))
+    avg_leverage  = (_wavg_col(q_latest_snap, "net_leverage", "revenue") or
+                     ((fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum()
+                      / fs_filtered["current_tev"].sum()
+                      if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None))
+    avg_margin    = (q_latest_snap["adj_ebitda_margin_pct"].mean()
+                     if not q_latest_snap.empty and "adj_ebitda_margin_pct" in q_latest_snap.columns
+                     else (fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None))
+
+    # Period label for tile subtitles
+    _period_label_str = {"Quarterly": "quarter", "Monthly": "month", "Yearly": "year"}.get(tab_period, "period")
 
     # Alert banner removed per feedback (4/7/26)
-
 
     # -----------------------------------------------------------------------
     # KPI TILES
@@ -697,19 +743,17 @@ def page_portfolio_overview():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -----------------------------------------------------------------------
-    # TOP 4 FLAG SUMMARY — QoQ change in key metrics, one box per metric
+    # TOP 4 FLAG SUMMARY — period-aware Δ in key metrics
     # -----------------------------------------------------------------------
     st.markdown('<div class="section-header">Portfolio Flag Summary</div>', unsafe_allow_html=True)
     flag_row_cols = st.columns([1, 1, 1, 1, 1])
 
-    # Compute QoQ changes from quarterly data for the filtered set
-    if not q_filt.empty:
-        latest_q   = q_filt.sort_values("cash_flow_date").groupby("company_name").last().reset_index()
-        prior_q    = q_filt.sort_values("cash_flow_date").groupby("company_name").nth(-2).reset_index()
-        qoq_ebitda = latest_q["adj_ebitda"].sum() - prior_q["adj_ebitda"].sum()                      if not prior_q.empty else None
-        qoq_rev    = latest_q["revenue"].sum() - prior_q["revenue"].sum()                      if not prior_q.empty else None
+    # Compute period-over-period changes using the selected period granularity
+    if not q_latest_snap.empty and not q_prior_snap.empty:
+        pop_ebitda = (_sum_col(q_latest_snap, "adj_ebitda") or 0) - (_sum_col(q_prior_snap, "adj_ebitda") or 0)
+        pop_rev    = (_sum_col(q_latest_snap, "revenue") or 0)    - (_sum_col(q_prior_snap, "revenue") or 0)
     else:
-        qoq_ebitda = qoq_rev = None
+        pop_ebitda = pop_rev = None
 
     def _flag_box(col, value_str, label, flag, note=""):
         clr = {
@@ -726,26 +770,31 @@ def page_portfolio_overview():
                 {note}</div>
         </div>""", unsafe_allow_html=True)
 
-    # LTM EBITDA QoQ
-    ebitda_flag = "Green" if qoq_ebitda and qoq_ebitda > 0 else "Red" if qoq_ebitda and qoq_ebitda < 0 else "Yellow"
-    ebitda_str  = (f"{'▲' if qoq_ebitda and qoq_ebitda > 0 else '▼'} {format_millions(abs(qoq_ebitda))}"
-                   if qoq_ebitda is not None else "—")
-    _flag_box(flag_row_cols[0], ebitda_str, "LTM EBITDA (QoQ Δ)", ebitda_flag, "vs prior quarter")
+    # LTM EBITDA period-over-period Δ
+    ebitda_flag = ("Green" if pop_ebitda and pop_ebitda > 0
+                   else "Red" if pop_ebitda and pop_ebitda < 0 else "Yellow")
+    ebitda_str  = (f"{'▲' if pop_ebitda and pop_ebitda > 0 else '▼'} {format_millions(abs(pop_ebitda))}"
+                   if pop_ebitda is not None else "—")
+    _flag_box(flag_row_cols[0], ebitda_str, "LTM EBITDA Δ", ebitda_flag,
+              f"vs prior {_period_label_str}")
 
-    # LTM Revenue Growth
-    rev_flag = "Green" if avg_margin and total_revenue else "Yellow"
+    # Avg Revenue Growth (YoY from flags — point-in-time, won't change with period)
     if not flags_filtered.empty and "revenue_yoy" in flags_filtered.columns:
         avg_rev_growth = flags_filtered["revenue_yoy"].mean()
         rev_flag = "Green" if avg_rev_growth > 0.10 else "Yellow" if avg_rev_growth > 0 else "Red"
-        rev_str = format_pct(avg_rev_growth)
+        rev_str  = format_pct(avg_rev_growth)
     else:
-        rev_str = "—"
+        rev_flag = "Yellow"
+        rev_str  = "—"
     _flag_box(flag_row_cols[1], rev_str, "Avg Rev Growth (YoY)", rev_flag, "portfolio average")
 
-    # Avg Net Leverage
-    lev_flag = "Green" if avg_leverage and avg_leverage < 5 else "Yellow" if avg_leverage and avg_leverage < 6 else "Red"
-    _flag_box(flag_row_cols[2], format_multiple(avg_leverage), "Avg Net Leverage",
-              lev_flag, "wtd. by TEV · Red >6x")
+    # Avg Net Leverage — from latest period snapshot
+    avg_lev_tile = (_wavg_col(q_latest_snap, "net_leverage", "revenue")
+                    if not q_latest_snap.empty else avg_leverage)
+    lev_flag = ("Green" if avg_lev_tile and avg_lev_tile < 5
+                else "Yellow" if avg_lev_tile and avg_lev_tile < 6 else "Red")
+    _flag_box(flag_row_cols[2], format_multiple(avg_lev_tile), "Avg Net Leverage",
+              lev_flag, f"latest {_period_label_str} · Red >6x")
 
     # Gross MOIC (pending)
     flag_row_cols[3].markdown(kpi_tile_pending("Gross MOIC"), unsafe_allow_html=True)
