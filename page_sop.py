@@ -402,7 +402,7 @@ def render_sop_new_company():
         ("6", "Add company attributes and create lineage record", "Settings → Bulk Upload → Get All Templates → Attributes Template\nCopy/paste labels from: Income statement · Balance sheet · Cash flow (SOCF) · KPI supplement · Budget/forecast · Mgmt. adj. EBITDA bridge\nAppend '(SOCF)' to all cash flow labels before importing"),
     ]
     for num, title, detail in steps:
-        with st.expander(f"Step {num}: {title}", expanded=(num == "1")):
+        with st.expander(f"Step {num}: {title}", expanded=True):
             for line in detail.split("\n"):
                 st.markdown(line)
 
@@ -417,7 +417,7 @@ def render_sop_data_request():
         ("4", "Request fulfilled → moves to Under Review", "Map the financials to attributes following the same process as outlined in Step 6 of Creating New Companies\nOnce mapped, the request will automatically move to Closed"),
     ]
     for num, title, detail in steps:
-        with st.expander(f"Step {num}: {title}", expanded=(num == "1")):
+        with st.expander(f"Step {num}: {title}", expanded=True):
             for line in detail.split("\n"):
                 st.markdown(line)
     st.markdown(_info_box("Missed submission escalation: Day 1 → Offshore notifies Deal Team · Day 2 → Deal Team contacts PortCo · Day 5 → Escalate to Vantage Finance · Day 10 → Escalate to Deal VP and MD. All missed submissions must be documented in the Issue Tracker."), unsafe_allow_html=True)
@@ -640,7 +640,7 @@ Phase -1 to Phase 9 (~60 days total, 2 clean reporting cycles required for certi
 
 def page_sop():
     from ui import render_page_header
-    render_page_header("SOP / Training")
+    render_page_header("SOPs & Trainings")
 
     # Search bar at top
     search_query = st.text_input(
@@ -657,21 +657,29 @@ def page_sop():
         st.session_state["sop_active"] = "contacts"
     active = st.session_state["sop_active"]
 
+    # Scrollable left nav CSS
+    st.markdown("""
+    <style>
+    [data-testid="stHorizontalBlock"] > div:first-child {
+        position: sticky;
+        top: 60px;
+        max-height: calc(100vh - 80px);
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Sidebar navigation
     with sidebar_col:
         for group, sections in SOP_SECTIONS.items():
             st.markdown(
-                f'<div style="font-size:9px;font-weight:700;color:{SLATE};text-transform:uppercase;'
-                f'letter-spacing:0.5px;padding:10px 0 4px 0;margin-top:4px;">{group}</div>',
+                f'<div style="font-size:10px;font-weight:700;color:{SLATE};text-transform:uppercase;'
+                f'letter-spacing:0.5px;padding:10px 0 4px 0;margin-top:4px;text-align:left;">{group}</div>',
                 unsafe_allow_html=True
             )
             for label, key in sections.items():
                 is_active = (key == active)
-                btn_style = (
-                    f"background:{NAVY};color:white;border-left:3px solid {GOLD};"
-                    if is_active else
-                    f"background:transparent;color:{SLATE};border-left:3px solid transparent;"
-                )
                 if st.button(
                     label,
                     key=f"sop_nav_{key}",

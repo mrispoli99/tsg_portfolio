@@ -469,8 +469,13 @@ def page_company_detail_enhanced():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Sub-tabs within company detail
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Financials", "Income Statement", "Alerts", "Macro & News", "Overview"
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Company Overview",
+        "Company-Specific Analysis",
+        "Valuation",
+        "KPI Metric Alerts",
+        "Macro & News",
+        "General Information",
     ])
 
     with tab1:
@@ -552,16 +557,32 @@ def page_company_detail_enhanced():
                     st.plotly_chart(fig4, use_container_width=True)
 
     with tab2:
-        # Comparison period toggle
-        cmp_cols = st.columns([3, 1])
-        with cmp_cols[1]:
-            cmp_period = st.radio("Compare vs.", ["Prior Year", "Prior Quarter"],
-                                   horizontal=False, key="cd_is_comparison",
-                                   label_visibility="visible")
-        with cmp_cols[0]:
-            render_income_statement(selected, compare_mode=cmp_period)
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:2px dashed #CCCCCC; border-radius:10px;
+                    padding:60px 40px; text-align:center; margin-top:20px;">
+            <div style="font-size:28px; margin-bottom:12px;">🔬</div>
+            <div style="font-size:18px; font-weight:700; color:#999999; font-family:Arial;
+                        margin-bottom:8px;">Company-Specific Analysis — Coming Soon</div>
+            <div style="font-size:13px; color:#BBBBBB; font-family:Arial;">
+                Deep-dive company analytics and custom analysis views will be available here.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with tab3:
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:2px dashed #CCCCCC; border-radius:10px;
+                    padding:60px 40px; text-align:center; margin-top:20px;">
+            <div style="font-size:28px; margin-bottom:12px;">📊</div>
+            <div style="font-size:18px; font-weight:700; color:#999999; font-family:Arial;
+                        margin-bottom:8px;">Valuation — Coming Soon</div>
+            <div style="font-size:13px; color:#BBBBBB; font-family:Arial;">
+                Company valuation metrics, MOIC, IRR, and comparable analysis will appear here.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab4:
         st.markdown('<div class="section-header">Credit & Performance Flag Scorecard</div>',
                     unsafe_allow_html=True)
 
@@ -581,7 +602,7 @@ def page_company_detail_enhanced():
             "Floating Rate Debt %":   ("< 20%",   "20–50%",    "50–80%",    "> 80%",   "Floating Rate Debt ÷ Total Gross Debt"),
         }
 
-        with st.expander("Flag Thresholds & Calculation Methodology", expanded=False):
+        with st.expander("Flag Thresholds & Calculation Methodology", expanded=True):
             thresh_rows = []
             for metric, (best, green, yellow, red, calc) in ALERT_THRESHOLDS.items():
                 thresh_rows.append({
@@ -609,10 +630,24 @@ def page_company_detail_enhanced():
         except Exception as exc:
             st.warning(f"Could not load flag scorecard: {exc}")
 
-    with tab4:
+    with tab5:
         st.markdown('<div class="section-header">Macro & News</div>',
                     unsafe_allow_html=True)
-        # Macro context placeholder
+
+        # CapIQ market comps placeholder
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:20px 24px; margin-bottom:16px;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
+                        margin-bottom:4px;">📈 Market Comps (CapIQ)</div>
+            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
+                CapIQ market comparables integration coming soon. Public peer multiples,
+                sector benchmarks, and trading comps will appear here.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Macro context
         macro_sector = info_row.get("client_sector", "") if info_row is not None else ""
         if macro_sector:
             st.markdown(f"""
@@ -628,7 +663,7 @@ def page_company_detail_enhanced():
         except Exception as exc:
             st.info(f"News not available: {exc}")
 
-    with tab5:
+    with tab6:
         if info_row is None:
             st.info("Company profile data not available in company_master.csv.")
         elif True:
@@ -678,3 +713,4 @@ def page_company_detail_enhanced():
                 for label, val in gov_fields:
                     if val and str(val) not in ("None", "nan", ""):
                         st.markdown(f"**{label}:** {val}")
+
