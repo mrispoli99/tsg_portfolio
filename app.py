@@ -866,15 +866,421 @@ def page_portfolio_overview():
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
-    # ---- TAB 2: By Company Trends ----
+        # ----------------------------------------------------------------
+        # TAB 1 PIVOT TABLE: companies as rows, periods as columns
+        # Single metric selectbox (alpha order) above the table
+        # ----------------------------------------------------------------
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">KPI Trend by Company</div>',
+                    unsafe_allow_html=True)
+        st.caption("Select a metric to see how each company has trended across periods. Δ% = change vs prior period.")
+
+        # Build the same ALL_METRIC_DEFS here so tab 1 is self-contained
+        _T1_METRIC_DEFS = [
+            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False),
+            ("Current TEV",             "current_tev",              "fs",    format_millions, False),
+            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False),
+            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False),
+            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False),
+            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True),
+            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False),
+            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False),
+            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False),
+            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False),
+            ("Entry TEV",               "entry_tev",                "fs",    format_millions, False),
+            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False),
+            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False),
+            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False),
+            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True),
+            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False),
+            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True),
+            ("Gross Profit",            "gross_profit",             "q",     format_millions, False),
+            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False),
+            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False),
+            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False),
+            ("LTM Cash Interest (Gross)","cash_interest_expense",   "q",     format_millions, False),
+            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False),
+            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False),
+            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False),
+            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False),
+            ("LTM Net Sales",           "revenue",                  "q",     format_millions, False),
+            ("LTM Revenue",             "revenue",                  "q",     format_millions, False),
+            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False),
+            ("Net Debt",                "net_debt",                 "q",     format_millions, False),
+            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False),
+            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True),
+            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False),
+            ("Total Cost",              "entry_tev",                "fs",    format_millions, False),
+            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False),
+            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False),
+            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False),
+        ]
+        _t1_metric_labels = sorted([d[0] for d in _T1_METRIC_DEFS])
+        _t1_metric_lookup = {d[0]: d for d in _T1_METRIC_DEFS}
+
+        # Single selectbox — alpha order
+        _t1_sel = st.selectbox(
+            "Metric",
+            _t1_metric_labels,
+            index=_t1_metric_labels.index("LTM Revenue") if "LTM Revenue" in _t1_metric_labels else 0,
+            key="t1_metric_select",
+            label_visibility="collapsed"
+        )
+
+        # Build period labels from q_filt using the tab-level period setting
+        _t1_q = q_filt.copy() if not q_filt.empty else pd.DataFrame()
+        if not _t1_q.empty:
+            _t1_q["cash_flow_date"] = pd.to_datetime(_t1_q["cash_flow_date"], errors="coerce")
+            if tab_period == "Monthly":
+                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%b %Y")
+            elif tab_period == "Yearly":
+                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.year.astype(str)
+            else:
+                _t1_q["_plabel"] = (_t1_q["period_label"] if "period_label" in _t1_q.columns
+                                    else _t1_q["cash_flow_date"].dt.to_period("Q").astype(str))
+
+        _t1_periods = []
+        if not _t1_q.empty:
+            _t1_periods = (_t1_q.sort_values("cash_flow_date")["_plabel"]
+                           .drop_duplicates().tolist())
+        _t1_display_periods = _t1_periods[-12:] if len(_t1_periods) > 12 else _t1_periods
+
+        _t1_companies = sorted(fs_filtered["company_name"].unique().tolist())
+
+        _t1_lbl, _t1_col, _t1_src, _t1_fmt, _t1_is_pct = _t1_metric_lookup[_t1_sel]
+
+        def _t1_get_val(cname, period):
+            if _t1_src == "q":
+                if _t1_q.empty or _t1_col not in _t1_q.columns:
+                    return None
+                sub = _t1_q[(_t1_q["company_name"] == cname) & (_t1_q["_plabel"] == period)]
+                if sub.empty: return None
+                v = sub.sort_values("cash_flow_date").iloc[-1][_t1_col]
+                return None if pd.isna(v) else float(v)
+            elif _t1_src == "fs":
+                sub = fs_filtered[fs_filtered["company_name"] == cname]
+                if sub.empty or _t1_col not in sub.columns: return None
+                v = sub.iloc[0][_t1_col]
+                return None if pd.isna(v) else float(v)
+            elif _t1_src == "flags":
+                sub = flags_filtered[flags_filtered["company_name"] == cname]
+                if sub.empty or _t1_col not in sub.columns: return None
+                v = sub.iloc[0][_t1_col]
+                return None if pd.isna(v) else float(v)
+
+        # Build pivot: companies as rows, periods as columns
+        _t1_rows = []
+        for cname in _t1_companies:
+            row = {"Company": cname}
+            prev_val = None
+            for p in _t1_display_periods:
+                val = _t1_get_val(cname, p)
+                row[p] = _t1_fmt(val) if val is not None else "—"
+                if prev_val is not None and val is not None and prev_val != 0:
+                    row[f"Δ {p}"] = f"{(val - prev_val) / abs(prev_val) * 100:+.1f}%"
+                else:
+                    row[f"Δ {p}"] = "—"
+                prev_val = val
+            _t1_rows.append(row)
+
+        if _t1_rows:
+            _t1_df = pd.DataFrame(_t1_rows).set_index("Company")
+            _t1_delta_cols = [c for c in _t1_df.columns if c.startswith("Δ ")]
+
+            def _t1_style(r):
+                out = []
+                for c in r.index:
+                    s = str(r[c])
+                    if c.startswith("Δ "):
+                        if s.startswith("+"): out.append(f"color:{SEA_GREEN};font-weight:600")
+                        elif s.startswith("-"): out.append(f"color:{RED_FLAG};font-weight:600")
+                        else: out.append("")
+                    else:
+                        out.append("")
+                return out
+
+            try:
+                _t1_styled = _t1_df.style.apply(_t1_style, axis=1)
+            except Exception:
+                _t1_styled = _t1_df.style
+
+            st.dataframe(_t1_styled, use_container_width=True,
+                         height=min(600, len(_t1_rows) * 38 + 50))
+            st.caption(f"**{_t1_sel}** · {tab_period} · Δ% = change vs prior period")
+        else:
+            st.info("No data available for the selected metric and filter.")
+
+
+    # ---- TAB 2: By Company Trends — classic metrics × companies snapshot ----
     with po_tab2:
 
         # ----------------------------------------------------------------
-        # METRIC DEFINITIONS — full list requested in feedback
-        # Each entry: (display_label, q_col_or_fs_col, source, fmt_fn, is_pct, category)
-        # source: "q" = quarterly, "fs" = fund_summary, "flags" = flags_filtered
+        # METRIC DEFINITIONS shared with tab 1 additional charts
         # ----------------------------------------------------------------
         ALL_METRIC_DEFS = [
+            ("Entry TEV",               "entry_tev",               "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            ("Current TEV",             "current_tev",              "fs",    format_millions, False, "LTM Current — $USD"),
+            ("LTM Net Sales",           "revenue",                  "q",     format_millions, False, "LTM Current — $USD"),
+            ("LTM EBITDA",              "adj_ebitda",               "q",     format_millions, False, "LTM Current — $USD"),
+            ("Current Net Debt",        "net_debt",                 "q",     format_millions, False, "LTM Current — $USD"),
+            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False, "LTM Current — Ratios"),
+            ("Total Cost",              "entry_tev",                "fs",    format_millions, False, "Valuation"),
+            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False, "Valuation"),
+            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True,  "Valuation"),
+            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False, "Credit Agreement"),
+            ("Fixed Rate Debt",         "fixed_rate_debt",          "q",     format_millions, False, "Credit Agreement"),
+            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False, "Credit Agreement"),
+            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False, "Credit Agreement"),
+            ("Cash",                    "cash",                     "q",     format_millions, False, "Credit Agreement"),
+            ("Net Debt",                "net_debt",                 "q",     format_millions, False, "Credit Agreement"),
+            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Interest (Gross)","cash_interest_expense",   "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False, "Debt Ratios"),
+            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False, "Debt Ratios"),
+            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False, "Debt Ratios"),
+            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False, "Debt Ratios"),
+            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False, "Debt Ratios"),
+            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False, "Debt Ratios"),
+            ("LTM Revenue",             "revenue",                  "q",     format_millions, False, "Operating"),
+            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True,  "Operating"),
+            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True,  "Operating"),
+            ("Gross Profit",            "gross_profit",             "q",     format_millions, False, "Operating"),
+            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True,  "Operating"),
+        ]
+
+        metric_labels   = [d[0] for d in ALL_METRIC_DEFS]
+        metric_lookup   = {d[0]: d for d in ALL_METRIC_DEFS}
+        categories      = list(dict.fromkeys(d[5] for d in ALL_METRIC_DEFS))
+
+        period_mode = tab_period
+
+        # Build period-labeled quarterly data
+        def _period_label(df, mode):
+            df = df.copy()
+            df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+            if mode == "Monthly":
+                df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
+            elif mode == "Yearly":
+                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+            else:
+                df["_plabel"] = (df["period_label"] if "period_label" in df.columns
+                                 else df["cash_flow_date"].dt.to_period("Q").astype(str))
+            return df
+
+        q_prep = _period_label(q_filt, period_mode) if not q_filt.empty else pd.DataFrame()
+
+        if not q_prep.empty:
+            all_periods = (q_prep.sort_values("cash_flow_date")["_plabel"]
+                           .drop_duplicates().tolist())
+        else:
+            all_periods = []
+
+        companies_ord = sorted(fs_filtered["company_name"].unique().tolist())
+
+        # ----------------------------------------------------------------
+        # PERIOD SELECTBOX — pick which period snapshot to show
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Investment Summary — KPI View</div>',
+                    unsafe_allow_html=True)
+        st.caption("Select a period to see a snapshot of all KPIs across every company for that period.")
+
+        sel_col_left, sel_col_right = st.columns([2, 5])
+        with sel_col_left:
+            if all_periods:
+                selected_period = st.selectbox(
+                    "Period",
+                    options=list(reversed(all_periods)),   # most recent first
+                    key="t2_period_select",
+                    label_visibility="collapsed"
+                )
+            else:
+                selected_period = None
+                st.info("No period data available.")
+
+        # Helper: get value for one company for the selected period
+        def _get_snap_val(cname, metric_def):
+            lbl, col, src, fmt, is_pct, cat = metric_def
+            if src == "q":
+                if q_prep.empty or col not in q_prep.columns or selected_period is None:
+                    return None
+                sub = q_prep[(q_prep["company_name"] == cname) &
+                             (q_prep["_plabel"] == selected_period)]
+                if sub.empty: return None
+                v = sub.sort_values("cash_flow_date").iloc[-1][col]
+                return None if pd.isna(v) else v
+            elif src == "fs":
+                sub = fs_filtered[fs_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns: return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+            elif src == "flags":
+                sub = flags_filtered[flags_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns: return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+            return None
+
+        # Helper: get flag colour for a value given its flag column
+        FLAG_COL_MAP = {
+            "revenue_yoy":           "revenue_growth_flag",
+            "adj_ebitda_margin_pct": "ebitda_margin_flag",
+            "net_leverage":          "net_leverage_flag",
+            "interest_coverage":     "interest_coverage_flag",
+        }
+
+        def _get_flag_color(cname, q_col):
+            flag_col = FLAG_COL_MAP.get(q_col)
+            if not flag_col: return None
+            sub = flags_filtered[flags_filtered["company_name"] == cname]
+            if sub.empty or flag_col not in sub.columns: return None
+            return sub.iloc[0][flag_col]
+
+        # ----------------------------------------------------------------
+        # SNAPSHOT TABLE: metrics as rows, companies as columns
+        # ----------------------------------------------------------------
+        if companies_ord:
+            snap_rows = []
+            for lbl, col, src, fmt, is_pct, cat in ALL_METRIC_DEFS:
+                row = {"KPI": lbl}
+                for cname in companies_ord:
+                    val = _get_snap_val(cname, (lbl, col, src, fmt, is_pct, cat))
+                    row[cname] = fmt(val) if val is not None and not pd.isna(val) else "—"
+                    row[f"__flag_{cname}"] = _get_flag_color(cname, col)
+                snap_rows.append(row)
+
+            snap_df = pd.DataFrame(snap_rows)
+            flag_cols_hidden = [c for c in snap_df.columns if c.startswith("__flag_")]
+            disp_df = snap_df.drop(columns=flag_cols_hidden).set_index("KPI")
+
+            def _style_snap(row):
+                out = []
+                for cname in row.index:
+                    fval = snap_df.loc[snap_df["KPI"] == row.name,
+                                       f"__flag_{cname}"].values[0] \
+                           if f"__flag_{cname}" in snap_df.columns else None
+                    clr = ""
+                    if fval == "Red":    clr = f"color:{RED_FLAG};font-weight:600"
+                    elif fval == "Yellow": clr = "color:#B7860B;font-weight:600"
+                    elif fval == "Green":  clr = f"color:{SEA_GREEN};font-weight:600"
+                    out.append(clr)
+                return out
+
+            try:
+                styled_snap = disp_df.style.apply(_style_snap, axis=1)
+            except Exception:
+                styled_snap = disp_df.style
+
+            st.dataframe(styled_snap, use_container_width=True,
+                         height=min(700, len(snap_rows) * 35 + 50))
+            st.caption(f"Showing period: **{selected_period}** · "
+                       f"Flag colours apply to Revenue Growth, EBITDA Margin, Net Leverage, Interest Coverage")
+
+        # ----------------------------------------------------------------
+        # Period-over-period chart driven by metric selectbox
+        # ----------------------------------------------------------------
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Period-over-Period Chart</div>',
+                    unsafe_allow_html=True)
+
+        active_metric = st.selectbox(
+            "Select metric for chart",
+            sorted(metric_labels),
+            key="t2_chart_metric_select",
+            label_visibility="visible"
+        )
+
+        mdef = metric_lookup[active_metric]
+        _, m_col, m_src, m_fmt, m_is_pct, _ = mdef
+
+        display_periods = all_periods[-12:] if len(all_periods) > 12 else all_periods
+
+        def _get_val(cname, period, metric_def):
+            lbl, col, src, fmt, is_pct, cat = metric_def
+            if src == "q":
+                if q_prep.empty or col not in q_prep.columns: return None
+                sub = q_prep[(q_prep["company_name"] == cname) & (q_prep["_plabel"] == period)]
+                if sub.empty: return None
+                v = sub.sort_values("cash_flow_date").iloc[-1][col]
+                return None if pd.isna(v) else v
+            elif src == "fs":
+                sub = fs_filtered[fs_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns: return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+            elif src == "flags":
+                sub = flags_filtered[flags_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns: return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+
+        if m_src == "q" and not q_prep.empty and m_col in q_prep.columns:
+            kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", m_col]].dropna(subset=[m_col]).copy()
+            kpi_ts = kpi_ts.sort_values("cash_flow_date")
+            kpi_ts["_prev"] = kpi_ts.groupby("company_name")[m_col].shift(1)
+            kpi_ts["_chg"]  = kpi_ts[m_col] - kpi_ts["_prev"]
+            kpi_ts = kpi_ts.dropna(subset=["_chg"])
+            if display_periods:
+                kpi_ts = kpi_ts[kpi_ts["_plabel"].isin(display_periods)]
+
+            if not kpi_ts.empty:
+                fig_pop = go.Figure()
+                for j, cname in enumerate(companies_ord):
+                    co_ts = kpi_ts[kpi_ts["company_name"] == cname]
+                    if co_ts.empty: continue
+                    fig_pop.add_trace(go.Bar(
+                        x=co_ts["_plabel"], y=co_ts["_chg"],
+                        name=cname,
+                        marker_color=COMPANY_COLORS[j % len(COMPANY_COLORS)],
+                    ))
+                fig_pop.update_layout(
+                    height=360, barmode="group",
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    legend=dict(font=dict(size=9), orientation="h", y=-0.25),
+                    xaxis=dict(tickangle=-45, gridcolor=BORDER),
+                    yaxis=dict(tickformat=".0%" if m_is_pct else "$,.0f",
+                               gridcolor=BORDER, title=f"Δ {active_metric}"),
+                )
+                st.plotly_chart(fig_pop, use_container_width=True)
+                st.caption(f"Period-over-period change in {active_metric}.")
+            else:
+                st.info("Not enough periods to compute period-over-period change.")
+        elif m_src in ("fs", "flags"):
+            # Static snapshot — bar chart
+            fs_vals = [{"Company": c, "Value": _get_val(c, None, mdef)}
+                       for c in companies_ord]
+            fs_vals = [r for r in fs_vals if r["Value"] is not None]
+            if fs_vals:
+                fv_df = pd.DataFrame(fs_vals).sort_values("Value")
+                fig_fs = go.Figure(go.Bar(
+                    x=fv_df["Value"], y=fv_df["Company"], orientation="h",
+                    marker_color=NAVY,
+                    text=fv_df["Value"].apply(m_fmt), textposition="outside"
+                ))
+                tick_fmt = ".2f" if "MOI" in active_metric or "Leverage" in active_metric else "$,.0f"
+                fig_fs.update_layout(
+                    height=max(280, len(fv_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=tick_fmt, gridcolor=BORDER),
+                )
+                st.plotly_chart(fig_fs, use_container_width=True)
+                st.caption(f"{active_metric} — latest snapshot (static, no time series).")
             # --- LTM at Entry — Fund Currency ($USD) ---
             ("Entry TEV",               "entry_tev",               "fs",    format_millions, False, "LTM at Entry — $USD"),
             ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False, "LTM at Entry — $USD"),
@@ -925,272 +1331,6 @@ def page_portfolio_overview():
             ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True,  "Operating"),
             ("Gross Profit",            "gross_profit",             "q",     format_millions, False, "Operating"),
             ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True,  "Operating"),
-        ]
-
-        metric_labels   = [d[0] for d in ALL_METRIC_DEFS]
-        metric_lookup   = {d[0]: d for d in ALL_METRIC_DEFS}
-        categories      = list(dict.fromkeys(d[5] for d in ALL_METRIC_DEFS))
-
-        # Active metric state
-        if "po_active_metric" not in st.session_state:
-            st.session_state["po_active_metric"] = "LTM Revenue"
-        active_metric = st.session_state["po_active_metric"]
-
-        # Period from tab-level toggle
-        period_mode = tab_period  # "Quarterly", "Monthly", "Yearly"
-
-        # ----------------------------------------------------------------
-        # Prep quarterly data with correct period label
-        # ----------------------------------------------------------------
-        def _period_label(df, mode):
-            """Return df with period_label set per mode."""
-            df = df.copy()
-            df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
-            if mode == "Monthly":
-                df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
-            elif mode == "Yearly":
-                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
-            else:  # Quarterly
-                df["_plabel"] = df["period_label"] if "period_label" in df.columns else df["cash_flow_date"].dt.to_period("Q").astype(str)
-            return df
-
-        q_prep = _period_label(q_filt, period_mode) if not q_filt.empty else pd.DataFrame()
-
-        # Get all period labels sorted
-        if not q_prep.empty:
-            all_periods = (q_prep.sort_values("cash_flow_date")["_plabel"]
-                           .drop_duplicates().tolist())
-        else:
-            all_periods = []
-
-        companies_ord = sorted(fs_filtered["company_name"].unique().tolist())
-
-        # ----------------------------------------------------------------
-        # HELPER: get value for one company × one period × one metric
-        # ----------------------------------------------------------------
-        def _get_val(cname, period, metric_def):
-            lbl, col, src, fmt, is_pct, cat = metric_def
-            if src == "q":
-                if q_prep.empty or col not in q_prep.columns:
-                    return None
-                sub = q_prep[(q_prep["company_name"] == cname) &
-                             (q_prep["_plabel"] == period)]
-                if sub.empty:
-                    return None
-                v = sub.sort_values("cash_flow_date").iloc[-1][col]
-                return None if pd.isna(v) else v
-            elif src == "fs":
-                sub = fs_filtered[fs_filtered["company_name"] == cname]
-                if sub.empty or col not in sub.columns:
-                    return None
-                v = sub.iloc[0][col]
-                return None if pd.isna(v) else v
-            elif src == "flags":
-                sub = flags_filtered[flags_filtered["company_name"] == cname]
-                if sub.empty or col not in sub.columns:
-                    return None
-                v = sub.iloc[0][col]
-                return None if pd.isna(v) else v
-            return None
-
-        # ----------------------------------------------------------------
-        # MAIN PIVOT TABLE:
-        # Rows = companies, Columns = periods + Δ% (for active metric only)
-        # ----------------------------------------------------------------
-        st.markdown('<div class="section-header">By Company Trends</div>',
-                    unsafe_allow_html=True)
-        st.caption("One metric shown across all periods. Select the metric using the buttons below the table.")
-
-        mdef = metric_lookup[active_metric]
-        _, m_col, m_src, m_fmt, m_is_pct, _ = mdef
-
-        # Use last N periods (keep table readable)
-        display_periods = all_periods[-12:] if len(all_periods) > 12 else all_periods
-
-        if not display_periods and m_src == "fs":
-            # fund_summary metrics have no time axis — show single-column table
-            display_periods = ["Latest"]
-
-        pivot_rows = []
-        for cname in companies_ord:
-            row = {"Company": cname}
-            prev_val = None
-            for p in display_periods:
-                if p == "Latest" and m_src == "fs":
-                    val = _get_val(cname, p, mdef)
-                else:
-                    val = _get_val(cname, p, mdef)
-                row[p] = m_fmt(val) if val is not None else "—"
-                # Compute Δ% vs previous period
-                if prev_val is not None and val is not None and prev_val != 0:
-                    chg = (val - prev_val) / abs(prev_val)
-                    row[f"Δ {p}"] = f"{chg*100:+.1f}%"
-                else:
-                    row[f"Δ {p}"] = "—"
-                prev_val = val
-            pivot_rows.append(row)
-
-        if pivot_rows:
-            pivot_df = pd.DataFrame(pivot_rows).set_index("Company")
-
-            # Style Δ columns green/red
-            delta_cols = [c for c in pivot_df.columns if c.startswith("Δ ")]
-            def _style_delta(v):
-                s = str(v)
-                if s.startswith("+"): return f"color:{SEA_GREEN}; font-weight:600"
-                if s.startswith("-"): return f"color:{RED_FLAG}; font-weight:600"
-                return ""
-
-            try:
-                styled_pivot = pivot_df.style.map(_style_delta, subset=delta_cols)
-            except Exception:
-                styled_pivot = pivot_df.style
-
-            tbl_height = min(600, len(pivot_rows) * 38 + 50)
-            st.dataframe(styled_pivot, use_container_width=True, height=tbl_height)
-            st.caption(f"Showing: **{active_metric}** · {period_mode} periods · Δ% = change vs prior period")
-        else:
-            st.info("No data available for the current filter selection.")
-
-        # ----------------------------------------------------------------
-        # METRIC SELECTOR — grouped by category, above chart
-        # ----------------------------------------------------------------
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">Select Metric for Chart</div>',
-                    unsafe_allow_html=True)
-
-        for cat in categories:
-            cat_metrics = [d[0] for d in ALL_METRIC_DEFS if d[5] == cat]
-            # Only show category if at least one metric has data
-            st.markdown(
-                f'<div style="font-size:10px;font-weight:700;color:{SLATE};'
-                f'text-transform:uppercase;letter-spacing:0.5px;'
-                f'margin:10px 0 4px 0;">{cat}</div>',
-                unsafe_allow_html=True
-            )
-            btn_row = st.columns(min(len(cat_metrics), 6))
-            for i, lbl in enumerate(cat_metrics):
-                is_active_btn = (lbl == active_metric)
-                if btn_row[i % len(btn_row)].button(
-                    lbl,
-                    key=f"metric_btn_{lbl}",
-                    use_container_width=True,
-                    type="primary" if is_active_btn else "secondary"
-                ):
-                    st.session_state["po_active_metric"] = lbl
-                    st.rerun()
-
-        # ----------------------------------------------------------------
-        # PERIOD-OVER-PERIOD CHART — changes per period per company
-        # ----------------------------------------------------------------
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="section-header">{active_metric} — Period-over-Period Change</div>',
-            unsafe_allow_html=True
-        )
-
-        if m_src in ("q",) and not q_prep.empty and m_col in q_prep.columns:
-            kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", m_col]].dropna(subset=[m_col]).copy()
-            kpi_ts = kpi_ts.sort_values("cash_flow_date")
-
-            # Compute period-over-period change per company
-            kpi_ts["_prev"] = kpi_ts.groupby("company_name")[m_col].shift(1)
-            kpi_ts["_chg"]  = kpi_ts[m_col] - kpi_ts["_prev"]
-            kpi_ts["_chg_pct"] = (kpi_ts["_chg"] / kpi_ts["_prev"].abs()).where(
-                kpi_ts["_prev"].notna() & (kpi_ts["_prev"] != 0)
-            )
-            kpi_ts = kpi_ts.dropna(subset=["_chg"])
-
-            # Trim to recent periods
-            if len(display_periods) > 0:
-                kpi_ts = kpi_ts[kpi_ts["_plabel"].isin(display_periods)]
-
-            if not kpi_ts.empty:
-                # Bar chart — period on x, grouped by company, y = $ or % change
-                fig_pop = go.Figure()
-                for j, cname in enumerate(companies_ord):
-                    co_ts = kpi_ts[kpi_ts["company_name"] == cname]
-                    if co_ts.empty:
-                        continue
-                    fig_pop.add_trace(go.Bar(
-                        x=co_ts["_plabel"],
-                        y=co_ts["_chg"],
-                        name=cname,
-                        marker_color=COMPANY_COLORS[j % len(COMPANY_COLORS)],
-                    ))
-
-                tick_fmt = ".0%" if m_is_pct else "$,.0f"
-                fig_pop.update_layout(
-                    height=360,
-                    barmode="group",
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    margin=dict(l=0, r=0, t=10, b=0),
-                    font=dict(family="Arial", color=NAVY, size=10),
-                    legend=dict(font=dict(size=9), orientation="h", y=-0.25),
-                    xaxis=dict(tickangle=-45, gridcolor=BORDER),
-                    yaxis=dict(tickformat=tick_fmt, gridcolor=BORDER,
-                               title=f"Δ {active_metric}"),
-                )
-                st.plotly_chart(fig_pop, use_container_width=True)
-                st.caption(f"Period-over-period change in {active_metric}. Bars above zero = improvement.")
-            else:
-                st.info("Not enough periods to compute period-over-period change.")
-
-        elif m_src == "flags":
-            # Point-in-time only — show bar chart of latest value by company
-            flag_vals = []
-            for cname in companies_ord:
-                v = _get_val(cname, None, mdef)
-                if v is not None:
-                    flag_vals.append({"Company": cname, "Value": v})
-            if flag_vals:
-                fv_df = pd.DataFrame(flag_vals).sort_values("Value")
-                fig_fv = go.Figure(go.Bar(
-                    x=fv_df["Value"], y=fv_df["Company"],
-                    orientation="h",
-                    marker_color=[SEA_GREEN if v > 0.10 else XANTHOUS if v > 0 else RED_FLAG
-                                  for v in fv_df["Value"]],
-                    text=fv_df["Value"].apply(m_fmt),
-                    textposition="outside"
-                ))
-                fig_fv.update_layout(
-                    height=max(280, len(fv_df) * 28),
-                    plot_bgcolor="white", paper_bgcolor="white",
-                    margin=dict(l=0, r=80, t=10, b=0),
-                    font=dict(family="Arial", color=NAVY, size=10),
-                    xaxis=dict(tickformat=".0%", gridcolor=BORDER),
-                )
-                st.plotly_chart(fig_fv, use_container_width=True)
-                st.caption(f"{active_metric} — latest point-in-time value (no time series available).")
-
-        elif m_src == "fs":
-            # Fund summary — single value per company, show horizontal bar
-            fs_vals = []
-            for cname in companies_ord:
-                v = _get_val(cname, "Latest", mdef)
-                if v is not None:
-                    fs_vals.append({"Company": cname, "Value": v})
-            if fs_vals:
-                fv_df = pd.DataFrame(fs_vals).sort_values("Value")
-                fig_fs = go.Figure(go.Bar(
-                    x=fv_df["Value"], y=fv_df["Company"],
-                    orientation="h",
-                    marker_color=NAVY,
-                    text=fv_df["Value"].apply(m_fmt),
-                    textposition="outside"
-                ))
-                tick_fmt = ".2f" if "MOI" in active_metric or "Leverage" in active_metric else "$,.0f"
-                fig_fs.update_layout(
-                    height=max(280, len(fv_df) * 28),
-                    plot_bgcolor="white", paper_bgcolor="white",
-                    margin=dict(l=0, r=80, t=10, b=0),
-                    font=dict(family="Arial", color=NAVY, size=10),
-                    xaxis=dict(tickformat=tick_fmt, gridcolor=BORDER),
-                )
-                st.plotly_chart(fig_fs, use_container_width=True)
-                st.caption(f"{active_metric} — fund summary snapshot (static, no time series).")
-
         # ================================================================
         # ADDITIONAL CHARTS — Tab 2
         # ================================================================
