@@ -642,82 +642,199 @@ def page_sop():
     from ui import render_page_header
     render_page_header("SOPs & Trainings")
 
-    # Search bar at top
-    search_query = st.text_input(
-        "Search SOP content",
-        placeholder="e.g. KPI governance, restatement, user access...",
-        key="sop_search"
-    )
+    # Top-level tabs: SOP content | Requests
+    sop_tab, req_tab = st.tabs(["📋 SOPs & Trainings", "📝 Requests"])
 
-    # Two-panel layout: sidebar nav + content
-    sidebar_col, content_col = st.columns([1, 4])
+    # ----------------------------------------------------------------
+    # TAB 2: Requests — form-fill submissions
+    # ----------------------------------------------------------------
+    with req_tab:
+        st.markdown('<div class="section-header">Submit a Request</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:13px;color:{SLATE};font-family:Arial;margin-bottom:16px;">'
+            "Use the form below to submit a request to the Vantage Finance team. "
+            "All submissions are logged and reviewed within 2 business days."
+            "</div>",
+            unsafe_allow_html=True
+        )
 
-    # Determine active section
-    if "sop_active" not in st.session_state:
-        st.session_state["sop_active"] = "contacts"
-    active = st.session_state["sop_active"]
+        REQUEST_TYPES = [
+            "New Company Onboarding",
+            "KPI / Metric Change",
+            "Data Restatement",
+            "Attribute Addition or Edit",
+            "Formula Change",
+            "User Access & Permissions",
+            "Report Change or New Report",
+            "Ad Hoc Data Request",
+            "Platform Issue / Bug",
+            "Other",
+        ]
 
-    # Scrollable left nav CSS
-    st.markdown("""
-    <style>
-    [data-testid="stHorizontalBlock"] > div:first-child {
-        position: sticky;
-        top: 60px;
-        max-height: calc(100vh - 80px);
-        overflow-y: auto;
-        padding-right: 4px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+        with st.container():
+            r1, r2 = st.columns(2)
+            with r1:
+                req_type = st.selectbox("Request Type *", REQUEST_TYPES,
+                                        key="req_type")
+                req_company = st.text_input("Portfolio Company (if applicable)",
+                                             placeholder="e.g. ATI, Mavis, Summer Fridays",
+                                             key="req_company")
+                req_priority = st.selectbox("Priority *",
+                                             ["Normal", "High", "Urgent"],
+                                             key="req_priority")
+            with r2:
+                req_submitter = st.text_input("Your Name *",
+                                               placeholder="First Last",
+                                               key="req_submitter")
+                req_email = st.text_input("Your Email *",
+                                           placeholder="name@tsgconsumer.com",
+                                           key="req_email")
+                req_due = st.date_input("Requested By Date",
+                                         key="req_due")
 
-    # Sidebar navigation
-    with sidebar_col:
-        for group, sections in SOP_SECTIONS.items():
-            st.markdown(
-                f'<div style="font-size:10px;font-weight:700;color:{SLATE};text-transform:uppercase;'
-                f'letter-spacing:0.5px;padding:10px 0 4px 0;margin-top:4px;text-align:left;">{group}</div>',
-                unsafe_allow_html=True
+            req_description = st.text_area(
+                "Description *",
+                placeholder="Please describe the request in detail. Include any relevant context, "
+                            "data sources, or examples.",
+                height=140,
+                key="req_description"
             )
-            for label, key in sections.items():
-                is_active = (key == active)
-                if st.button(
-                    label,
-                    key=f"sop_nav_{key}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary"
-                ):
-                    st.session_state["sop_active"] = key
-                    st.rerun()
+            req_attachments = st.text_input(
+                "Relevant Links / File Paths (optional)",
+                placeholder="e.g. SharePoint link, 73Strings path, Google Drive URL",
+                key="req_attachments"
+            )
 
-    # Content area
-    with content_col:
-        # AI Q&A panel
-        with st.expander("AI Q&A — Ask anything about this SOP", expanded=False):
-            sop_chat_key = "sop_ai_chat"
-            if sop_chat_key not in st.session_state:
-                st.session_state[sop_chat_key] = []
+            st.markdown("<br>", unsafe_allow_html=True)
+            sub_col, _ = st.columns([1, 4])
+            with sub_col:
+                submitted = st.button("Submit Request", type="primary",
+                                       use_container_width=True, key="req_submit")
 
-            suggested = [
-                "What are the SLAs for PortCo data submission?",
-                "Who approves new KPIs?",
-                "How do I request a restatement?",
-                "What naming conventions should I use for formulas?",
-                "What is the escalation process for missed deadlines?",
-                "How do I create a new company in 73Strings?",
-            ]
-            if not st.session_state[sop_chat_key]:
-                sug_cols = st.columns(3)
-                for i, s in enumerate(suggested):
-                    if sug_cols[i % 3].button(s, key=f"sop_sug_{i}", use_container_width=True):
-                        st.session_state[sop_chat_key].append({"role": "user", "content": s})
-                        try:
-                            from ai import ask_claude
-                            resp = ask_claude(s, SOP_AI_CONTEXT, [])
-                            st.session_state[sop_chat_key].append({"role": "assistant", "content": resp})
-                        except Exception as exc:
-                            st.session_state[sop_chat_key].append(
-                                {"role": "assistant", "content": f"AI unavailable: {exc}"})
+            if submitted:
+                missing = []
+                if not req_submitter.strip(): missing.append("Your Name")
+                if not req_email.strip():     missing.append("Your Email")
+                if not req_description.strip(): missing.append("Description")
+                if missing:
+                    st.error(f"Please fill in the required fields: {', '.join(missing)}")
+                else:
+                    # Log to session state (in production, write to a DB/sheet)
+                    if "req_submissions" not in st.session_state:
+                        st.session_state["req_submissions"] = []
+                    import datetime
+                    st.session_state["req_submissions"].append({
+                        "Submitted":    datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Type":         req_type,
+                        "Company":      req_company or "—",
+                        "Priority":     req_priority,
+                        "Submitter":    req_submitter,
+                        "Email":        req_email,
+                        "Due By":       str(req_due),
+                        "Description":  req_description,
+                        "Links":        req_attachments or "—",
+                        "Status":       "Submitted",
+                    })
+                    st.success(
+                        f"✅ Request submitted! The Vantage Finance team will follow up "
+                        f"at **{req_email}** within 2 business days."
+                    )
+
+        # Show prior submissions this session
+        if st.session_state.get("req_submissions"):
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown('<div class="section-header">Submissions This Session</div>',
+                        unsafe_allow_html=True)
+            import pandas as _rpd
+            req_df = _rpd.DataFrame(st.session_state["req_submissions"])
+            st.dataframe(req_df, use_container_width=True, hide_index=True)
+
+    # ----------------------------------------------------------------
+    # TAB 1: SOPs & Trainings — search + left nav + content
+    # ----------------------------------------------------------------
+    with sop_tab:
+
+        # Search bar at top
+        search_query = st.text_input(
+            "Search SOP content",
+            placeholder="e.g. KPI governance, restatement, user access...",
+            key="sop_search"
+        )
+
+        # Two-panel layout: sidebar nav + content
+        sidebar_col, content_col = st.columns([1, 4])
+
+        # Determine active section
+        if "sop_active" not in st.session_state:
+            st.session_state["sop_active"] = "contacts"
+        active = st.session_state["sop_active"]
+
+        # Scrollable left nav CSS — sticky, independent scroll
+        st.markdown("""
+        <style>
+        div[data-testid="column"]:first-child {
+            position: sticky;
+            top: 60px;
+            max-height: calc(100vh - 80px);
+            overflow-y: auto;
+            align-self: flex-start;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Sidebar navigation — always type="secondary" to prevent Streamlit
+        # from dropping the widget on rerun; active state shown via label prefix
+        with sidebar_col:
+            for group, sections in SOP_SECTIONS.items():
+                st.markdown(
+                    f'<div style="font-size:10px;font-weight:700;color:{SLATE};'
+                    f'text-transform:uppercase;letter-spacing:0.5px;'
+                    f'padding:10px 0 4px 0;margin-top:4px;text-align:left;">{group}</div>',
+                    unsafe_allow_html=True
+                )
+                for label, key in sections.items():
+                    is_active = (key == active)
+                    btn_label = f"▶  {label}" if is_active else f"    {label}"
+                    # Always secondary — type change caused buttons to disappear on rerun
+                    if st.button(
+                        btn_label,
+                        key=f"sop_nav_{key}",
+                        use_container_width=True,
+                        type="secondary",
+                    ):
+                        st.session_state["sop_active"] = key
                         st.rerun()
+
+        # Content area
+        with content_col:
+            # AI Q&A panel
+            with st.expander("AI Q&A — Ask anything about this SOP", expanded=False):
+                sop_chat_key = "sop_ai_chat"
+                if sop_chat_key not in st.session_state:
+                    st.session_state[sop_chat_key] = []
+
+                suggested = [
+                    "What are the SLAs for PortCo data submission?",
+                    "Who approves new KPIs?",
+                    "How do I request a restatement?",
+                    "What naming conventions should I use for formulas?",
+                    "What is the escalation process for missed deadlines?",
+                    "How do I create a new company in 73Strings?",
+                ]
+                if not st.session_state[sop_chat_key]:
+                    sug_cols = st.columns(3)
+                    for i, s in enumerate(suggested):
+                        if sug_cols[i % 3].button(s, key=f"sop_sug_{i}", use_container_width=True):
+                            st.session_state[sop_chat_key].append({"role": "user", "content": s})
+                            try:
+                                from ai import ask_claude
+                                resp = ask_claude(s, SOP_AI_CONTEXT, [])
+                                st.session_state[sop_chat_key].append({"role": "assistant", "content": resp})
+                            except Exception as exc:
+                                st.session_state[sop_chat_key].append(
+                                    {"role": "assistant", "content": f"AI unavailable: {exc}"})
+                            st.rerun()
 
             for msg in st.session_state[sop_chat_key]:
                 role_style = (

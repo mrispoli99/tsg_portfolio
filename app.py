@@ -607,7 +607,7 @@ def page_portfolio_overview():
     # FILTERS
     # -----------------------------------------------------------------------
     with st.expander("Filters", expanded=False):
-        fc1, fc2, fc3, fc4 = st.columns(4)
+        fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 2, 1])
         with fc1:
             all_cos = sorted(fs["company_name"].dropna().unique().tolist()) if not fs.empty else []
             sel_companies_po = st.multiselect("Portfolio Company", all_cos,
@@ -631,6 +631,13 @@ def page_portfolio_overview():
             po_funds = sorted(fs["funds"].dropna().unique().tolist())                        if not fs.empty and "funds" in fs.columns else []
             sel_funds_po = st.multiselect("Fund", po_funds, default=po_funds,
                                            key="po_fund") if po_funds else []
+        with fc5:
+            tab_period = st.radio(
+                "Period",
+                ["Quarterly", "Monthly", "Yearly"],
+                key="po_tab_period",
+                label_visibility="visible"
+            )
 
     # Apply filters
     fs_filtered = fs.copy()
@@ -644,8 +651,18 @@ def page_portfolio_overview():
         fs_filtered = fs_filtered[fs_filtered["funds"].isin(sel_funds_po)]
 
     filtered_names = fs_filtered["company_name"].tolist()
-    q_filt  = quarterly[quarterly["company_name"].isin(filtered_names)]               if not fs_filtered.empty else quarterly
-    flags_filtered = flags[flags["company_name"].isin(filtered_names)]                      if not flags.empty else flags
+    q_filt = quarterly[quarterly["company_name"].isin(filtered_names)] \
+             if not fs_filtered.empty else quarterly
+
+    # Apply global 3-year rolling window to all portfolio charts
+    _three_yr_cutoff = pd.Timestamp.now() - pd.DateOffset(years=3)
+    if not q_filt.empty and "cash_flow_date" in q_filt.columns:
+        q_filt = q_filt.copy()
+        q_filt["cash_flow_date"] = pd.to_datetime(q_filt["cash_flow_date"], errors="coerce")
+        q_filt = q_filt[q_filt["cash_flow_date"] >= _three_yr_cutoff]
+
+    flags_filtered = flags[flags["company_name"].isin(filtered_names)] \
+                     if not flags.empty else flags
 
     # Compute KPIs from filtered set
     total_tev     = fs_filtered["current_tev"].sum()    if not fs_filtered.empty else None
@@ -742,21 +759,6 @@ def page_portfolio_overview():
         st.session_state["page"]             = "flags_alerts"
         st.session_state["flags_view_mode_init"] = "Scorecard Table"
         st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # -----------------------------------------------------------------------
-    # TAB-LEVEL PERIOD FILTER (applies to all charts on this page)
-    # -----------------------------------------------------------------------
-    period_col, _ = st.columns([2, 5])
-    with period_col:
-        tab_period = st.radio(
-            "Period",
-            ["Quarterly", "Monthly", "Yearly"],
-            horizontal=True,
-            key="po_tab_period",
-            label_visibility="visible"
-        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -868,265 +870,792 @@ def page_portfolio_overview():
     with po_tab2:
 
         # ----------------------------------------------------------------
-        # KPI definitions
+        # METRIC DEFINITIONS — full list requested in feedback
+        # Each entry: (display_label, q_col_or_fs_col, source, fmt_fn, is_pct, category)
+        # source: "q" = quarterly, "fs" = fund_summary, "flags" = flags_filtered
         # ----------------------------------------------------------------
-        KPI_DEFS = [
-            # (label, q_col, flag_col, fmt_fn, is_pct, category)
-            ("LTM Revenue",      "revenue",               None,                    format_millions, False, "Revenue"),
-            ("Rev Growth (YoY)", "FLAGS:revenue_yoy",     "revenue_growth_flag",   format_pct,      True,  "Revenue"),
-            ("LTM Adj. EBITDA",  "adj_ebitda",            None,                    format_millions, False, "EBITDA"),
-            ("EBITDA Margin",    "adj_ebitda_margin_pct", "ebitda_margin_flag",    format_pct,      True,  "EBITDA"),
-            ("Gross Profit",     "gross_profit",          None,                    format_millions, False, "Margin"),
-            ("Net Leverage",     "net_leverage",          "net_leverage_flag",     format_multiple, False, "Leverage"),
-            ("Interest Coverage","interest_coverage",     "interest_coverage_flag",format_multiple, False, "Coverage"),
+        ALL_METRIC_DEFS = [
+            # --- LTM at Entry — Fund Currency ($USD) ---
+            ("Entry TEV",               "entry_tev",               "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False, "LTM at Entry — $USD"),
+            # --- LTM at Entry — Ratios ---
+            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False, "LTM at Entry — Ratios"),
+            # --- Exit / LTM Current — Fund Currency ($USD) ---
+            ("Current TEV",             "current_tev",              "fs",    format_millions, False, "LTM Current — $USD"),
+            ("LTM Net Sales",           "revenue",                  "q",     format_millions, False, "LTM Current — $USD"),
+            ("LTM EBITDA",              "adj_ebitda",               "q",     format_millions, False, "LTM Current — $USD"),
+            ("Current Net Debt",        "net_debt",                 "q",     format_millions, False, "LTM Current — $USD"),
+            # --- Exit / LTM Current — Ratios ---
+            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False, "LTM Current — Ratios"),
+            # --- Valuation ---
+            ("Total Cost",              "entry_tev",                "fs",    format_millions, False, "Valuation"),
+            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False, "Valuation"),
+            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True,  "Valuation"),
+            # --- Credit Agreement — Total Outstanding Debt ---
+            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False, "Credit Agreement"),
+            ("Fixed Rate Debt",         "fixed_rate_debt",          "q",     format_millions, False, "Credit Agreement"),
+            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False, "Credit Agreement"),
+            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False, "Credit Agreement"),
+            ("Cash",                    "cash",                     "q",     format_millions, False, "Credit Agreement"),
+            ("Net Debt",                "net_debt",                 "q",     format_millions, False, "Credit Agreement"),
+            # --- Relevant Info for Debt Ratios ---
+            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Interest (Gross)","cash_interest_expense",    "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False, "Debt Ratio Inputs"),
+            # --- Debt Ratios & Metrics ---
+            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False, "Debt Ratios"),
+            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False, "Debt Ratios"),
+            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False, "Debt Ratios"),
+            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False, "Debt Ratios"),
+            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False, "Debt Ratios"),
+            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False, "Debt Ratios"),
+            # --- Core Operating KPIs (always useful) ---
+            ("LTM Revenue",             "revenue",                  "q",     format_millions, False, "Operating"),
+            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True,  "Operating"),
+            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True,  "Operating"),
+            ("Gross Profit",            "gross_profit",             "q",     format_millions, False, "Operating"),
+            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True,  "Operating"),
         ]
-        kpi_labels = [d[0] for d in KPI_DEFS]
-        kpi_lookup = {d[0]: d for d in KPI_DEFS}
 
-        # Use tab-level period filter
-        period_mode = tab_period
+        metric_labels   = [d[0] for d in ALL_METRIC_DEFS]
+        metric_lookup   = {d[0]: d for d in ALL_METRIC_DEFS}
+        categories      = list(dict.fromkeys(d[5] for d in ALL_METRIC_DEFS))
 
-        h1, _ = st.columns([5, 1])
-        with h1:
-            st.markdown('<div class="section-header">Investment Summary — KPI View</div>',
-                        unsafe_allow_html=True)
-            st.caption("Click any KPI button to drill into company-level trend and comparison.")
+        # Active metric state
+        if "po_active_metric" not in st.session_state:
+            st.session_state["po_active_metric"] = "LTM Revenue"
+        active_metric = st.session_state["po_active_metric"]
 
-        # Session state for active KPI
-        if "po_active_kpi" not in st.session_state:
-            st.session_state["po_active_kpi"] = kpi_labels[0]
-        active_kpi = st.session_state["po_active_kpi"]
+        # Period from tab-level toggle
+        period_mode = tab_period  # "Quarterly", "Monthly", "Yearly"
 
-        # Prep data
-        if not q_filt.empty:
-            q_sorted      = q_filt.sort_values("cash_flow_date")
-            q_latest      = q_sorted.groupby("company_name").last().reset_index()
-            companies_ord = sorted(q_latest["company_name"].unique().tolist())
+        # ----------------------------------------------------------------
+        # Prep quarterly data with correct period label
+        # ----------------------------------------------------------------
+        def _period_label(df, mode):
+            """Return df with period_label set per mode."""
+            df = df.copy()
+            df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+            if mode == "Monthly":
+                df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
+            elif mode == "Yearly":
+                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+            else:  # Quarterly
+                df["_plabel"] = df["period_label"] if "period_label" in df.columns else df["cash_flow_date"].dt.to_period("Q").astype(str)
+            return df
+
+        q_prep = _period_label(q_filt, period_mode) if not q_filt.empty else pd.DataFrame()
+
+        # Get all period labels sorted
+        if not q_prep.empty:
+            all_periods = (q_prep.sort_values("cash_flow_date")["_plabel"]
+                           .drop_duplicates().tolist())
         else:
-            q_latest      = pd.DataFrame()
-            companies_ord = fs_filtered["company_name"].tolist()
+            all_periods = []
+
+        companies_ord = sorted(fs_filtered["company_name"].unique().tolist())
 
         # ----------------------------------------------------------------
-        # KPI BUTTON ROW — clicking sets the active KPI
+        # HELPER: get value for one company × one period × one metric
         # ----------------------------------------------------------------
-        st.markdown(f"""
-        <style>
-        .kpi-btn-row button {{
-            font-size:11px !important; padding:6px 10px !important;
-            border-radius:20px !important; font-weight:600 !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-
-        btn_cols = st.columns(len(kpi_labels))
-        for i, lbl in enumerate(kpi_labels):
-            is_active_btn = (lbl == active_kpi)
-            _, flag_col_b, _, _, _, cat = kpi_lookup[lbl]
-            # Badge color by category
-            cat_color = {
-                "Revenue": NAVY, "EBITDA": SLATE, "Margin": SKY,
-                "Leverage": XANTHOUS, "Coverage": SEA_GREEN
-            }.get(cat, SLATE)
-            btn_type = "primary" if is_active_btn else "secondary"
-            if btn_cols[i].button(
-                lbl,
-                key=f"kpi_btn_{lbl}",
-                use_container_width=True,
-                type=btn_type,
-                help=f"Drill into {lbl} trend by company"
-            ):
-                st.session_state["po_active_kpi"] = lbl
-                st.rerun()
-
-        st.markdown("<br>", unsafe_allow_html=True)
+        def _get_val(cname, period, metric_def):
+            lbl, col, src, fmt, is_pct, cat = metric_def
+            if src == "q":
+                if q_prep.empty or col not in q_prep.columns:
+                    return None
+                sub = q_prep[(q_prep["company_name"] == cname) &
+                             (q_prep["_plabel"] == period)]
+                if sub.empty:
+                    return None
+                v = sub.sort_values("cash_flow_date").iloc[-1][col]
+                return None if pd.isna(v) else v
+            elif src == "fs":
+                sub = fs_filtered[fs_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns:
+                    return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+            elif src == "flags":
+                sub = flags_filtered[flags_filtered["company_name"] == cname]
+                if sub.empty or col not in sub.columns:
+                    return None
+                v = sub.iloc[0][col]
+                return None if pd.isna(v) else v
+            return None
 
         # ----------------------------------------------------------------
-        # SUMMARY SNAPSHOT TABLE — all KPIs × companies, latest period
+        # MAIN PIVOT TABLE:
+        # Rows = companies, Columns = periods + Δ% (for active metric only)
         # ----------------------------------------------------------------
-        if not q_latest.empty:
-            snap_rows = []
-            for lbl, q_col, flag_col, fmt, is_pct, cat in KPI_DEFS:
-                row = {"KPI": lbl}
-                for cname in companies_ord:
-                    # Handle FLAGS: prefix — pull from flags_filtered not quarterly
-                    if q_col.startswith("FLAGS:"):
-                        flags_col = q_col[6:]
-                        fl = flags_filtered[flags_filtered["company_name"] == cname]
-                        val = fl.iloc[0][flags_col]                               if not fl.empty and flags_col in fl.columns else None
-                    else:
-                        co  = q_latest[q_latest["company_name"] == cname]
-                        val = co.iloc[0][q_col]                               if not co.empty and q_col in co.columns else None
-                    row[cname] = fmt(val) if val is not None and not pd.isna(val) else "—"
-                    if flag_col:
-                        fl = flags_filtered[flags_filtered["company_name"] == cname]
-                        if not fl.empty and flag_col in fl.columns:
-                            row[f"__f_{cname}"] = fl.iloc[0][flag_col]
-                snap_rows.append(row)
+        st.markdown('<div class="section-header">By Company Trends</div>',
+                    unsafe_allow_html=True)
+        st.caption("One metric shown across all periods. Select the metric using the buttons below the table.")
 
-            snap_df     = pd.DataFrame(snap_rows)
-            hidden_fcols= [c for c in snap_df.columns if c.startswith("__f_")]
-            disp_snap   = snap_df.drop(columns=hidden_fcols).set_index("KPI")
+        mdef = metric_lookup[active_metric]
+        _, m_col, m_src, m_fmt, m_is_pct, _ = mdef
 
-            # Highlight active KPI row + color-code flagged cells
-            def style_snap(row):
-                out = []
-                for cname in row.index:
-                    fval = snap_df.loc[snap_df["KPI"] == row.name,
-                                       f"__f_{cname}"].values[0]                            if f"__f_{cname}" in snap_df.columns else None
-                    is_active_row = (row.name == active_kpi)
-                    bg  = f"background:#EFF3F8;" if is_active_row else ""
-                    clr = ""
-                    fw  = "font-weight:700;" if is_active_row else ""
-                    if fval == "Red":    clr = f"color:{RED_FLAG};"
-                    elif fval == "Yellow": clr = "color:#B7860B;"
-                    elif fval == "Green":  clr = f"color:{SEA_GREEN};"
-                    out.append(bg + clr + fw)
-                return out
+        # Use last N periods (keep table readable)
+        display_periods = all_periods[-12:] if len(all_periods) > 12 else all_periods
+
+        if not display_periods and m_src == "fs":
+            # fund_summary metrics have no time axis — show single-column table
+            display_periods = ["Latest"]
+
+        pivot_rows = []
+        for cname in companies_ord:
+            row = {"Company": cname}
+            prev_val = None
+            for p in display_periods:
+                if p == "Latest" and m_src == "fs":
+                    val = _get_val(cname, p, mdef)
+                else:
+                    val = _get_val(cname, p, mdef)
+                row[p] = m_fmt(val) if val is not None else "—"
+                # Compute Δ% vs previous period
+                if prev_val is not None and val is not None and prev_val != 0:
+                    chg = (val - prev_val) / abs(prev_val)
+                    row[f"Δ {p}"] = f"{chg*100:+.1f}%"
+                else:
+                    row[f"Δ {p}"] = "—"
+                prev_val = val
+            pivot_rows.append(row)
+
+        if pivot_rows:
+            pivot_df = pd.DataFrame(pivot_rows).set_index("Company")
+
+            # Style Δ columns green/red
+            delta_cols = [c for c in pivot_df.columns if c.startswith("Δ ")]
+            def _style_delta(v):
+                s = str(v)
+                if s.startswith("+"): return f"color:{SEA_GREEN}; font-weight:600"
+                if s.startswith("-"): return f"color:{RED_FLAG}; font-weight:600"
+                return ""
 
             try:
-                styled_snap = disp_snap.style.apply(style_snap, axis=1)
+                styled_pivot = pivot_df.style.map(_style_delta, subset=delta_cols)
             except Exception:
-                styled_snap = disp_snap.style
+                styled_pivot = pivot_df.style
 
-            st.dataframe(styled_snap, use_container_width=True,
-                         height=min(320, len(snap_rows) * 38 + 40))
-            st.caption(f"Active KPI highlighted. Click a button above to change. "
-                       f"Showing latest {'monthly' if period_mode=='Monthly' else 'quarterly'} values.")
+            tbl_height = min(600, len(pivot_rows) * 38 + 50)
+            st.dataframe(styled_pivot, use_container_width=True, height=tbl_height)
+            st.caption(f"Showing: **{active_metric}** · {period_mode} periods · Δ% = change vs prior period")
+        else:
+            st.info("No data available for the current filter selection.")
 
         # ----------------------------------------------------------------
-        # DRILL-THROUGH for active KPI
+        # METRIC SELECTOR — grouped by category, above chart
         # ----------------------------------------------------------------
         st.markdown("<br>", unsafe_allow_html=True)
-        _, sel_col, _, sel_fmt, sel_is_pct, _ = kpi_lookup[active_kpi]
+        st.markdown('<div class="section-header">Select Metric for Chart</div>',
+                    unsafe_allow_html=True)
 
+        for cat in categories:
+            cat_metrics = [d[0] for d in ALL_METRIC_DEFS if d[5] == cat]
+            # Only show category if at least one metric has data
+            st.markdown(
+                f'<div style="font-size:10px;font-weight:700;color:{SLATE};'
+                f'text-transform:uppercase;letter-spacing:0.5px;'
+                f'margin:10px 0 4px 0;">{cat}</div>',
+                unsafe_allow_html=True
+            )
+            btn_row = st.columns(min(len(cat_metrics), 6))
+            for i, lbl in enumerate(cat_metrics):
+                is_active_btn = (lbl == active_metric)
+                if btn_row[i % len(btn_row)].button(
+                    lbl,
+                    key=f"metric_btn_{lbl}",
+                    use_container_width=True,
+                    type="primary" if is_active_btn else "secondary"
+                ):
+                    st.session_state["po_active_metric"] = lbl
+                    st.rerun()
+
+        # ----------------------------------------------------------------
+        # PERIOD-OVER-PERIOD CHART — changes per period per company
+        # ----------------------------------------------------------------
+        st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
-            f'<div class="section-header">{active_kpi} — Trend & Company Comparison</div>',
+            f'<div class="section-header">{active_metric} — Period-over-Period Change</div>',
             unsafe_allow_html=True
         )
 
-        # For FLAGS: columns, use flags_filtered (single value per company, no trend)
-        is_flags_col = sel_col.startswith("FLAGS:")
-        actual_col   = sel_col[6:] if is_flags_col else sel_col
+        if m_src in ("q",) and not q_prep.empty and m_col in q_prep.columns:
+            kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", m_col]].dropna(subset=[m_col]).copy()
+            kpi_ts = kpi_ts.sort_values("cash_flow_date")
 
-        if is_flags_col:
-            # Build a simple bar chart from flags snapshot (no time series available)
-            flag_snap = flags_filtered[["company_name", actual_col]].dropna(subset=[actual_col]).copy()
-            flag_snap = flag_snap.sort_values(actual_col)
-            if not flag_snap.empty:
-                fig_drill = go.Figure(go.Bar(
-                    x=flag_snap[actual_col],
-                    y=flag_snap["company_name"],
+            # Compute period-over-period change per company
+            kpi_ts["_prev"] = kpi_ts.groupby("company_name")[m_col].shift(1)
+            kpi_ts["_chg"]  = kpi_ts[m_col] - kpi_ts["_prev"]
+            kpi_ts["_chg_pct"] = (kpi_ts["_chg"] / kpi_ts["_prev"].abs()).where(
+                kpi_ts["_prev"].notna() & (kpi_ts["_prev"] != 0)
+            )
+            kpi_ts = kpi_ts.dropna(subset=["_chg"])
+
+            # Trim to recent periods
+            if len(display_periods) > 0:
+                kpi_ts = kpi_ts[kpi_ts["_plabel"].isin(display_periods)]
+
+            if not kpi_ts.empty:
+                # Bar chart — period on x, grouped by company, y = $ or % change
+                fig_pop = go.Figure()
+                for j, cname in enumerate(companies_ord):
+                    co_ts = kpi_ts[kpi_ts["company_name"] == cname]
+                    if co_ts.empty:
+                        continue
+                    fig_pop.add_trace(go.Bar(
+                        x=co_ts["_plabel"],
+                        y=co_ts["_chg"],
+                        name=cname,
+                        marker_color=COMPANY_COLORS[j % len(COMPANY_COLORS)],
+                    ))
+
+                tick_fmt = ".0%" if m_is_pct else "$,.0f"
+                fig_pop.update_layout(
+                    height=360,
+                    barmode="group",
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    legend=dict(font=dict(size=9), orientation="h", y=-0.25),
+                    xaxis=dict(tickangle=-45, gridcolor=BORDER),
+                    yaxis=dict(tickformat=tick_fmt, gridcolor=BORDER,
+                               title=f"Δ {active_metric}"),
+                )
+                st.plotly_chart(fig_pop, use_container_width=True)
+                st.caption(f"Period-over-period change in {active_metric}. Bars above zero = improvement.")
+            else:
+                st.info("Not enough periods to compute period-over-period change.")
+
+        elif m_src == "flags":
+            # Point-in-time only — show bar chart of latest value by company
+            flag_vals = []
+            for cname in companies_ord:
+                v = _get_val(cname, None, mdef)
+                if v is not None:
+                    flag_vals.append({"Company": cname, "Value": v})
+            if flag_vals:
+                fv_df = pd.DataFrame(flag_vals).sort_values("Value")
+                fig_fv = go.Figure(go.Bar(
+                    x=fv_df["Value"], y=fv_df["Company"],
                     orientation="h",
                     marker_color=[SEA_GREEN if v > 0.10 else XANTHOUS if v > 0 else RED_FLAG
-                                  for v in flag_snap[actual_col]],
-                    text=flag_snap[actual_col].apply(format_pct),
+                                  for v in fv_df["Value"]],
+                    text=fv_df["Value"].apply(m_fmt),
                     textposition="outside"
                 ))
-                fig_drill.update_layout(
-                    height=max(300, len(flag_snap) * 30),
+                fig_fv.update_layout(
+                    height=max(280, len(fv_df) * 28),
                     plot_bgcolor="white", paper_bgcolor="white",
                     margin=dict(l=0, r=80, t=10, b=0),
                     font=dict(family="Arial", color=NAVY, size=10),
                     xaxis=dict(tickformat=".0%", gridcolor=BORDER),
-                    title_text="LTM YoY — snapshot (no time series available for growth rates)"
                 )
-                st.plotly_chart(fig_drill, use_container_width=True)
-                st.caption("Rev Growth (YoY) is a point-in-time LTM calculation — time-series trend not available.")
+                st.plotly_chart(fig_fv, use_container_width=True)
+                st.caption(f"{active_metric} — latest point-in-time value (no time series available).")
 
-                # Simple latest table
-                flag_snap_disp = flag_snap.copy()
-                flag_snap_disp[actual_col] = flag_snap_disp[actual_col].apply(format_pct)
-                flag_snap_disp = flag_snap_disp.rename(columns={"company_name":"Company", actual_col:"Rev Growth (YoY)"})
-                st.dataframe(flag_snap_disp.set_index("Company"), use_container_width=True)
+        elif m_src == "fs":
+            # Fund summary — single value per company, show horizontal bar
+            fs_vals = []
+            for cname in companies_ord:
+                v = _get_val(cname, "Latest", mdef)
+                if v is not None:
+                    fs_vals.append({"Company": cname, "Value": v})
+            if fs_vals:
+                fv_df = pd.DataFrame(fs_vals).sort_values("Value")
+                fig_fs = go.Figure(go.Bar(
+                    x=fv_df["Value"], y=fv_df["Company"],
+                    orientation="h",
+                    marker_color=NAVY,
+                    text=fv_df["Value"].apply(m_fmt),
+                    textposition="outside"
+                ))
+                tick_fmt = ".2f" if "MOI" in active_metric or "Leverage" in active_metric else "$,.0f"
+                fig_fs.update_layout(
+                    height=max(280, len(fv_df) * 28),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=tick_fmt, gridcolor=BORDER),
+                )
+                st.plotly_chart(fig_fs, use_container_width=True)
+                st.caption(f"{active_metric} — fund summary snapshot (static, no time series).")
 
-                st.caption("Click a company to open its detail page:")
-                nav_btns2 = st.columns(min(6, max(1, len(flag_snap))))
-                for i, cname in enumerate(flag_snap["company_name"].tolist()):
-                    if nav_btns2[i % len(nav_btns2)].button(
-                        cname, key=f"is_goto_flags_{cname}", use_container_width=True
-                    ):
-                        st.session_state["page"]             = "company_detail"
-                        st.session_state["selected_company"] = cname
-                        st.rerun()
+        # ================================================================
+        # ADDITIONAL CHARTS — Tab 2
+        # ================================================================
+        st.markdown("<hr style='border:1px solid #E0E4EA;margin:28px 0 20px 0;'>",
+                    unsafe_allow_html=True)
 
-        elif not q_filt.empty and actual_col in q_filt.columns:
-            kpi_df = q_filt[["company_name","period_label","cash_flow_date",
-                              actual_col]].dropna(subset=[actual_col]).copy()
+        # Helper: get latest quarterly value per company for a given column
+        def _latest_q(col):
+            if q_prep.empty or col not in q_prep.columns:
+                return pd.DataFrame()
+            return (q_prep.sort_values("cash_flow_date")
+                          .groupby("company_name")[[col, "cash_flow_date", "_plabel"]]
+                          .last()
+                          .reset_index()
+                          .dropna(subset=[col]))
 
-            # Apply monthly relabelling if needed
-            if period_mode == "Monthly":
-                kpi_df["period_label"] = pd.to_datetime(
-                    kpi_df["cash_flow_date"], errors="coerce").dt.strftime("%b %Y")
-            kpi_df = kpi_df.sort_values("cash_flow_date")
-            sel_col = actual_col  # use actual col for rest of block
+        # Helper: get time-series for a column, one row per company × period
+        def _ts_q(col):
+            if q_prep.empty or col not in q_prep.columns:
+                return pd.DataFrame()
+            return (q_prep[["company_name", "_plabel", "cash_flow_date", col]]
+                    .dropna(subset=[col])
+                    .sort_values("cash_flow_date")
+                    .copy())
 
-            # Trend line chart
-            fig_drill = px.line(
-                kpi_df, x="period_label", y=actual_col,
-                color="company_name",
-                color_discrete_sequence=COMPANY_COLORS,
-                markers=True,
-                labels={"period_label": "",
-                        sel_col: active_kpi,
-                        "company_name": "Company"},
-            )
-            fig_drill.update_layout(
-                height=340, plot_bgcolor="white", paper_bgcolor="white",
-                margin=dict(l=0, r=0, t=10, b=0),
+        CHART_H      = 380
+        CHART_H_TALL = max(300, len(companies_ord) * 28 + 60)
+
+        # ----------------------------------------------------------------
+        # 1. Revenue & EBITDA by Company (grouped bar, latest period)
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Revenue & EBITDA by Company — Latest Period</div>',
+                    unsafe_allow_html=True)
+
+        rev_df  = _latest_q("revenue")
+        ebit_df = _latest_q("adj_ebitda")
+
+        if not rev_df.empty or not ebit_df.empty:
+            from plotly.subplots import make_subplots as _msp
+            all_co = sorted(set(
+                rev_df["company_name"].tolist() + ebit_df["company_name"].tolist()
+            ))
+            fig_re = go.Figure()
+            rev_vals  = [rev_df.set_index("company_name")["revenue"].get(c, None) for c in all_co]
+            ebit_vals = [ebit_df.set_index("company_name")["adj_ebitda"].get(c, None) for c in all_co]
+
+            fig_re.add_trace(go.Bar(
+                name="LTM Revenue", x=all_co, y=rev_vals,
+                marker_color=NAVY, opacity=0.85,
+                text=[format_millions(v) for v in rev_vals],
+                textposition="outside", textfont=dict(size=8)
+            ))
+            fig_re.add_trace(go.Bar(
+                name="LTM Adj. EBITDA", x=all_co, y=ebit_vals,
+                marker_color=SKY, opacity=0.9,
+                text=[format_millions(v) for v in ebit_vals],
+                textposition="outside", textfont=dict(size=8)
+            ))
+            fig_re.update_layout(
+                height=CHART_H, barmode="group",
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=0, t=20, b=0),
                 font=dict(family="Arial", color=NAVY, size=10),
-                legend=dict(font=dict(size=9), orientation="h", y=-0.28),
-                xaxis=dict(tickangle=-45),
-                yaxis=dict(tickformat=".0%" if sel_is_pct else "$,.0f",
-                           gridcolor=BORDER)
+                legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+                yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                xaxis=dict(tickangle=-30),
             )
-            st.plotly_chart(fig_drill, use_container_width=True)
+            st.plotly_chart(fig_re, use_container_width=True)
+        else:
+            st.info("Revenue / EBITDA data not available.")
 
-            # Latest vs prior comparison table
-            st.markdown(
-                f'<div class="section-header">{active_kpi} — Latest vs Prior Period</div>',
-                unsafe_allow_html=True
+        # ----------------------------------------------------------------
+        # 2. Total Revenue vs. Budgeted Revenue by Company
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Total Revenue vs. Budgeted Revenue by Company</div>',
+                    unsafe_allow_html=True)
+
+        # Check for budget column in quarterly data
+        budget_col = next(
+            (c for c in ([] if q_prep.empty else q_prep.columns)
+             if "budget" in c.lower() or "budgeted" in c.lower()),
+            None
+        )
+        if budget_col and not q_prep.empty:
+            bud_rev = _latest_q("revenue").merge(
+                _latest_q(budget_col), on="company_name", suffixes=("_act", "_bud")
             )
-            latest_v = (kpi_df.groupby("company_name")
-                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-1][actual_col])
-                               .reset_index(name="Latest"))
-            prior_v  = (kpi_df.groupby("company_name")
-                               .apply(lambda x: x.sort_values("cash_flow_date").iloc[-2][actual_col]
-                                      if len(x) >= 2 else None)
-                               .reset_index(name="Prior"))
-            cmp = latest_v.merge(prior_v, on="company_name")
-            cmp["Change"]   = cmp["Latest"] - cmp["Prior"].fillna(0)
-            cmp["Change %"] = (cmp["Change"] / cmp["Prior"].abs()).where(
-                cmp["Prior"].notna() & (cmp["Prior"] != 0))
+            if not bud_rev.empty:
+                bud_co = bud_rev["company_name"].tolist()
+                fig_bud = go.Figure()
+                fig_bud.add_trace(go.Bar(
+                    name="Actual Revenue", x=bud_co,
+                    y=bud_rev["revenue"].tolist(), marker_color=NAVY
+                ))
+                fig_bud.add_trace(go.Bar(
+                    name="Budgeted Revenue", x=bud_co,
+                    y=bud_rev[budget_col].tolist(), marker_color=XANTHOUS,
+                    opacity=0.7
+                ))
+                fig_bud.update_layout(
+                    height=CHART_H, barmode="group",
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=20, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    legend=dict(orientation="h", y=-0.18),
+                    yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                    xaxis=dict(tickangle=-30),
+                )
+                st.plotly_chart(fig_bud, use_container_width=True)
+            else:
+                st.info("No companies have both actual and budget revenue data.")
+        else:
+            st.markdown(f"""
+            <div style="background:#F8F9FA;border:1px dashed #CCCCCC;border-radius:6px;
+                        padding:24px;text-align:center;">
+                <div style="font-size:13px;font-weight:700;color:#999;font-family:Arial;">
+                    Budgeted Revenue data not yet available
+                </div>
+                <div style="font-size:11px;color:#BBBBBB;font-family:Arial;margin-top:6px;">
+                    Add a <code>budgeted_revenue</code> column to financials_quarterly.csv
+                    to enable this chart
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            cmp["Latest"]   = cmp["Latest"].apply(sel_fmt)
-            cmp["Prior"]    = cmp["Prior"].apply(
-                lambda x: sel_fmt(x) if x is not None and not pd.isna(x) else "—")
-            cmp["Change"]   = cmp["Change"].apply(
-                lambda x: f"{x:+,.1f}" if x is not None and not pd.isna(x) else "—")
-            cmp["Change %"] = cmp["Change %"].apply(
-                lambda x: f"{x*100:+.1f}%" if x is not None and not pd.isna(x) else "—")
-            cmp = cmp.rename(columns={"company_name": "Company"})
+        # ----------------------------------------------------------------
+        # 3. EBITDA Contribution by Company as % of Total
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">EBITDA Contribution by Company — % of Portfolio Total</div>',
+                    unsafe_allow_html=True)
 
-            def color_chg(val):
-                s = str(val)
-                if s.startswith("+"): return f"color:{SEA_GREEN};font-weight:700"
-                if s.startswith("-"): return f"color:{RED_FLAG};font-weight:700"
-                return ""
+        ebit_latest = _latest_q("adj_ebitda")
+        if not ebit_latest.empty:
+            total_ebitda_port = ebit_latest["adj_ebitda"].sum()
+            ebit_latest = ebit_latest.copy()
+            ebit_latest["pct"] = ebit_latest["adj_ebitda"] / total_ebitda_port
+            ebit_latest = ebit_latest.sort_values("pct", ascending=True)
 
-            styled_cmp = (cmp.set_index("Company")
-                             .style.map(color_chg, subset=["Change","Change %"]))
-            st.dataframe(styled_cmp, use_container_width=True)
+            colors_contrib = [
+                SEA_GREEN if v >= 0 else RED_FLAG
+                for v in ebit_latest["adj_ebitda"]
+            ]
+            fig_contrib = go.Figure(go.Bar(
+                x=ebit_latest["pct"],
+                y=ebit_latest["company_name"],
+                orientation="h",
+                marker_color=colors_contrib,
+                text=[f"{v*100:.1f}%" for v in ebit_latest["pct"]],
+                textposition="outside",
+                customdata=ebit_latest["adj_ebitda"].tolist(),
+                hovertemplate="<b>%{y}</b><br>EBITDA: $%{customdata:.1f}M<br>Share: %{text}<extra></extra>",
+            ))
+            fig_contrib.update_layout(
+                height=CHART_H_TALL,
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=80, t=20, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                xaxis=dict(tickformat=".0%", gridcolor=BORDER,
+                           title="% of Portfolio EBITDA"),
+            )
+            st.plotly_chart(fig_contrib, use_container_width=True)
+            st.caption(f"Portfolio total LTM Adj. EBITDA: {format_millions(total_ebitda_port)}")
+        else:
+            st.info("EBITDA data not available.")
 
-            # Click-through to Company Detail
-            st.caption("Click a company to open its detail page:")
-            nav_btns = st.columns(min(6, max(1, len(cmp))))
-            for i, cname in enumerate(cmp["Company"].tolist()):
-                if nav_btns[i % len(nav_btns)].button(
-                    cname, key=f"is_goto_{cname}", use_container_width=True
-                ):
-                    st.session_state["page"]             = "company_detail"
-                    st.session_state["selected_company"] = cname
-                    st.rerun()
+        # ----------------------------------------------------------------
+        # 4. Gross IRR by Company
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Gross IRR by Company</div>',
+                    unsafe_allow_html=True)
+
+        if not fs_filtered.empty and "gross_irr" in fs_filtered.columns:
+            irr_df = (fs_filtered[["company_name", "gross_irr"]]
+                      .dropna(subset=["gross_irr"])
+                      .sort_values("gross_irr", ascending=True))
+            if not irr_df.empty:
+                irr_colors = [
+                    SEA_GREEN if v > 0.20 else XANTHOUS if v > 0.10 else RED_FLAG
+                    for v in irr_df["gross_irr"]
+                ]
+                fig_irr = go.Figure(go.Bar(
+                    x=irr_df["gross_irr"],
+                    y=irr_df["company_name"],
+                    orientation="h",
+                    marker_color=irr_colors,
+                    text=[format_pct(v) for v in irr_df["gross_irr"]],
+                    textposition="outside",
+                ))
+                fig_irr.add_vline(x=0.20, line_dash="dot", line_color=SEA_GREEN,
+                                   annotation_text="20% target")
+                fig_irr.update_layout(
+                    height=CHART_H_TALL,
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=20, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=".0%", gridcolor=BORDER),
+                )
+                st.plotly_chart(fig_irr, use_container_width=True)
+            else:
+                st.info("No Gross IRR data available.")
+        else:
+            st.info("Gross IRR not available — add gross_irr to fund_summary.csv.")
+
+        # ----------------------------------------------------------------
+        # 5. Interest Coverage Ratio by Company — trend over time
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Interest Coverage Ratio by Company</div>',
+                    unsafe_allow_html=True)
+
+        ic_ts = _ts_q("interest_coverage")
+        if not ic_ts.empty:
+            col_line, col_bar = st.columns([3, 2])
+
+            with col_line:
+                # Line chart — trend per company over periods
+                fig_ic_line = go.Figure()
+                for j, cname in enumerate(companies_ord):
+                    co = ic_ts[ic_ts["company_name"] == cname]
+                    if co.empty:
+                        continue
+                    fig_ic_line.add_trace(go.Scatter(
+                        x=co["_plabel"], y=co["interest_coverage"],
+                        name=cname, mode="lines+markers",
+                        line=dict(color=COMPANY_COLORS[j % len(COMPANY_COLORS)], width=1.5),
+                        marker=dict(size=4),
+                    ))
+                fig_ic_line.add_hline(y=3.0, line_dash="dash", line_color=SEA_GREEN,
+                                       annotation_text="3.0x Green")
+                fig_ic_line.add_hline(y=2.0, line_dash="dot", line_color=XANTHOUS,
+                                       annotation_text="2.0x Watch")
+                fig_ic_line.add_hline(y=0, line_color=RED_FLAG, line_width=0.5)
+                fig_ic_line.update_layout(
+                    height=CHART_H,
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    legend=dict(font=dict(size=8), orientation="h", y=-0.28),
+                    xaxis=dict(tickangle=-45),
+                    yaxis=dict(tickformat=".1f", ticksuffix="x", gridcolor=BORDER,
+                               title="Interest Coverage"),
+                )
+                st.plotly_chart(fig_ic_line, use_container_width=True)
+
+            with col_bar:
+                # Latest snapshot horizontal bar
+                ic_latest = (_ts_q("interest_coverage")
+                             .sort_values("cash_flow_date")
+                             .groupby("company_name")["interest_coverage"]
+                             .last().reset_index()
+                             .sort_values("interest_coverage", ascending=True))
+                ic_colors = [
+                    SEA_GREEN if v > 3 else XANTHOUS if v > 2 else RED_FLAG
+                    for v in ic_latest["interest_coverage"]
+                ]
+                fig_ic_bar = go.Figure(go.Bar(
+                    x=ic_latest["interest_coverage"],
+                    y=ic_latest["company_name"],
+                    orientation="h",
+                    marker_color=ic_colors,
+                    text=[f"{v:.1f}x" for v in ic_latest["interest_coverage"]],
+                    textposition="outside",
+                ))
+                fig_ic_bar.add_vline(x=3.0, line_dash="dash", line_color=SEA_GREEN)
+                fig_ic_bar.add_vline(x=2.0, line_dash="dot",  line_color=XANTHOUS)
+                fig_ic_bar.update_layout(
+                    height=CHART_H_TALL,
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat=".1f", ticksuffix="x", gridcolor=BORDER,
+                               title="Latest"),
+                )
+                st.plotly_chart(fig_ic_bar, use_container_width=True)
+        else:
+            st.info("Interest Coverage data not available in quarterly data.")
+
+        # ----------------------------------------------------------------
+        # 6. Net Debt by Company — trend + latest snapshot
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">Net Debt by Company</div>',
+                    unsafe_allow_html=True)
+
+        nd_ts = _ts_q("net_debt")
+        if not nd_ts.empty:
+            col_nd1, col_nd2 = st.columns([3, 2])
+
+            with col_nd1:
+                fig_nd_line = go.Figure()
+                for j, cname in enumerate(companies_ord):
+                    co = nd_ts[nd_ts["company_name"] == cname]
+                    if co.empty:
+                        continue
+                    fig_nd_line.add_trace(go.Scatter(
+                        x=co["_plabel"], y=co["net_debt"],
+                        name=cname, mode="lines+markers",
+                        line=dict(color=COMPANY_COLORS[j % len(COMPANY_COLORS)], width=1.5),
+                        marker=dict(size=4),
+                    ))
+                fig_nd_line.update_layout(
+                    height=CHART_H,
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    legend=dict(font=dict(size=8), orientation="h", y=-0.28),
+                    xaxis=dict(tickangle=-45),
+                    yaxis=dict(tickformat="$,.0f", gridcolor=BORDER, title="Net Debt ($M)"),
+                )
+                st.plotly_chart(fig_nd_line, use_container_width=True)
+
+            with col_nd2:
+                nd_latest = (nd_ts.sort_values("cash_flow_date")
+                                  .groupby("company_name")["net_debt"]
+                                  .last().reset_index()
+                                  .sort_values("net_debt", ascending=False))
+                nd_colors = [
+                    RED_FLAG if v > 0 else SEA_GREEN for v in nd_latest["net_debt"]
+                ]
+                fig_nd_bar = go.Figure(go.Bar(
+                    x=nd_latest["net_debt"],
+                    y=nd_latest["company_name"],
+                    orientation="h",
+                    marker_color=nd_colors,
+                    text=[format_millions(v) for v in nd_latest["net_debt"]],
+                    textposition="outside",
+                ))
+                fig_nd_bar.update_layout(
+                    height=CHART_H_TALL,
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat="$,.0f", gridcolor=BORDER, title="Latest ($M)"),
+                )
+                st.plotly_chart(fig_nd_bar, use_container_width=True)
+        else:
+            # Fall back to fund summary if net_debt in quarterly isn't available
+            if not fs_filtered.empty and "net_debt" in fs_filtered.columns:
+                nd_fs = (fs_filtered[["company_name", "net_debt"]]
+                         .dropna(subset=["net_debt"])
+                         .sort_values("net_debt", ascending=False))
+                fig_nd_fs = go.Figure(go.Bar(
+                    x=nd_fs["net_debt"], y=nd_fs["company_name"],
+                    orientation="h",
+                    marker_color=[RED_FLAG if v > 0 else SEA_GREEN for v in nd_fs["net_debt"]],
+                    text=[format_millions(v) for v in nd_fs["net_debt"]],
+                    textposition="outside",
+                ))
+                fig_nd_fs.update_layout(
+                    height=CHART_H_TALL, plot_bgcolor="white", paper_bgcolor="white",
+                    margin=dict(l=0, r=80, t=10, b=0),
+                    font=dict(family="Arial", color=NAVY, size=10),
+                    xaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                )
+                st.plotly_chart(fig_nd_fs, use_container_width=True)
+            else:
+                st.info("Net Debt data not available.")
+
+        # ----------------------------------------------------------------
+        # 7. EBITDA Growth vs. Multiple Expansion / Compression
+        #    Scatter: x = EBITDA growth (entry → current), y = TEV/EBITDA change
+        #    Bubble size = current TEV
+        # ----------------------------------------------------------------
+        st.markdown('<div class="section-header">EBITDA Growth vs. Multiple Expansion / Compression</div>',
+                    unsafe_allow_html=True)
+        st.caption("x-axis: EBITDA growth since entry  ·  y-axis: TEV/EBITDA multiple change (positive = expansion)  ·  bubble size = current TEV")
+
+        scatter_cols_needed = {
+            "entry_adj_ebitda", "entry_tev_to_ebitda",
+            "current_tev", "tev_to_ebitda", "overall_flag"
+        }
+        ebitda_latest = _latest_q("adj_ebitda")
+        has_scatter = (
+            not fs_filtered.empty
+            and scatter_cols_needed.issubset(set(fs_filtered.columns))
+            and not ebitda_latest.empty
+        )
+
+        if has_scatter:
+            sc_df = fs_filtered[list(scatter_cols_needed | {"company_name"})].copy()
+            sc_df = sc_df.merge(
+                ebitda_latest[["company_name", "adj_ebitda"]],
+                on="company_name", how="left"
+            )
+            sc_df = sc_df.dropna(
+                subset=["entry_adj_ebitda", "entry_tev_to_ebitda",
+                        "tev_to_ebitda", "current_tev"]
+            )
+            # EBITDA growth = (current - entry) / |entry|
+            sc_df["ebitda_growth"] = (
+                (sc_df["adj_ebitda"] - sc_df["entry_adj_ebitda"])
+                / sc_df["entry_adj_ebitda"].abs()
+            )
+            # Multiple change = current TEV/EBITDA − entry TEV/EBITDA
+            sc_df["multiple_chg"] = sc_df["tev_to_ebitda"] - sc_df["entry_tev_to_ebitda"]
+
+            color_map = {"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN}
+            fig_scat = go.Figure()
+
+            for flag_val, grp in sc_df.groupby("overall_flag"):
+                fig_scat.add_trace(go.Scatter(
+                    x=grp["ebitda_growth"],
+                    y=grp["multiple_chg"],
+                    mode="markers+text",
+                    name=flag_val,
+                    text=grp["company_name"],
+                    textposition="top center",
+                    textfont=dict(size=8),
+                    marker=dict(
+                        size=grp["current_tev"].fillna(1000).apply(
+                            lambda v: max(8, min(50, v / 500))
+                        ),
+                        color=color_map.get(flag_val, SLATE),
+                        opacity=0.75,
+                        line=dict(width=1, color="white"),
+                    ),
+                ))
+
+            # Quadrant lines
+            fig_scat.add_hline(y=0, line_color=SLATE, line_width=1)
+            fig_scat.add_vline(x=0, line_color=SLATE, line_width=1)
+
+            # Quadrant labels
+            for (x, y, txt) in [
+                (0.6,  4,   "↑ Organic + Multiple"),
+                (-0.3, 4,   "↑ Multiple only"),
+                (0.6, -4,   "↑ Organic, ↓ Multiple"),
+                (-0.3,-4,   "↓ Both"),
+            ]:
+                fig_scat.add_annotation(
+                    x=x, y=y, text=txt,
+                    showarrow=False,
+                    font=dict(size=9, color=SLATE),
+                    xref="x", yref="y"
+                )
+
+            fig_scat.update_layout(
+                height=460,
+                plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=0, t=20, b=0),
+                font=dict(family="Arial", color=NAVY, size=10),
+                legend=dict(font=dict(size=9), orientation="h", y=-0.12),
+                xaxis=dict(
+                    tickformat=".0%", gridcolor=BORDER,
+                    title="EBITDA Growth (Entry → Current)",
+                    zeroline=False,
+                ),
+                yaxis=dict(
+                    tickformat=".1f", ticksuffix="x", gridcolor=BORDER,
+                    title="TEV/EBITDA Multiple Change (turns)",
+                    zeroline=False,
+                ),
+            )
+            st.plotly_chart(fig_scat, use_container_width=True)
+        else:
+            st.markdown(f"""
+            <div style="background:#F8F9FA;border:1px dashed #CCCCCC;border-radius:6px;
+                        padding:24px;text-align:center;">
+                <div style="font-size:13px;font-weight:700;color:#999;font-family:Arial;">
+                    Entry vs. Current valuation data not yet available
+                </div>
+                <div style="font-size:11px;color:#BBBBBB;font-family:Arial;margin-top:6px;">
+                    Add entry_adj_ebitda, entry_tev_to_ebitda, tev_to_ebitda
+                    to fund_summary.csv to enable this chart
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
     # ---- TAB 3: Company Alerts — Active Portfolio Companies ----
