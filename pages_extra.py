@@ -597,6 +597,13 @@ def page_company_detail_enhanced():
             )
 
         if not q_all_co.empty:
+            # Filter to the correct period type FIRST — critical to avoid mixing
+            # quarterly, monthly, and annual rows (which share the same columns but
+            # have different magnitudes for non-LTM fields).
+            if "period" in q_all_co.columns:
+                _period_type_map = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
+                q_all_co = q_all_co[q_all_co["period"] == _period_type_map.get(co_period_mode, "Quarterly")]
+
             # Build period label per mode
             if co_period_mode == "Monthly":
                 q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.strftime("%b %Y")
@@ -615,15 +622,15 @@ def page_company_detail_enhanced():
             # (display_label, column, format_fn, is_pct, threshold_fn)
             # threshold_fn: given value, returns "Red"|"Yellow"|"Green"|None
             CO_KPI_DEFS = [
-                ("LTM Revenue ($M)",       "revenue",               format_millions, False,
+                ("LTM Revenue ($M)",       "ltm_revenue",               format_millions, False,
                     None),
-                ("LTM Adj. EBITDA ($M)",   "adj_ebitda",            format_millions, False,
+                ("LTM Adj. EBITDA ($M)",   "ltm_adj_ebitda",            format_millions, False,
                     None),
-                ("EBITDA Margin %",         "adj_ebitda_margin_pct", format_pct,      True,
+                ("EBITDA Margin %",         "ltm_adj_ebitda_margin_pct", format_pct,      True,
                     lambda v: "Green" if v > 0.18 else "Yellow" if v > 0.10 else "Red"),
-                ("Gross Profit ($M)",       "gross_profit",          format_millions, False,
+                ("Gross Profit ($M)",       "ltm_gross_profit",          format_millions, False,
                     None),
-                ("Gross Margin %",          "gross_margin_pct",      format_pct,      True,
+                ("Gross Margin %",          "ltm_gross_margin_pct",      format_pct,      True,
                     None),
                 ("Net Leverage",            "net_leverage",          format_multiple, False,
                     lambda v: "Green" if v < 5 else "Yellow" if v < 6 else "Red"),
