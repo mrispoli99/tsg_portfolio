@@ -695,49 +695,29 @@ def page_portfolio_overview():
         q_latest_snap = pd.DataFrame()
         q_prior_snap  = pd.DataFrame()
 
-    # Helper: sum a column across all companies from the latest-period snapshot
-    def _latest_total(col):
-        if q_latest_snap.empty or col not in q_latest_snap.columns: return None
-        v = q_latest_snap[col].sum()
-        return None if pd.isna(v) or v == 0 else float(v)
+    # -----------------------------------------------------------------------
+    # KPI tile values — pull pre-calculated LTM figures directly from
+    # fund_summary (fs_filtered). Do NOT recalculate from quarterly data.
+    # -----------------------------------------------------------------------
+    total_tev     = fs_filtered["current_tev"].sum() \
+                    if not fs_filtered.empty and "current_tev" in fs_filtered.columns else None
 
-    # Helper: TEV-weighted average of a column across companies
-    def _latest_wavg(col):
-        if q_latest_snap.empty or col not in q_latest_snap.columns: return None
-        merged = q_latest_snap[["company_name", col]].merge(
-            fs_filtered[["company_name", "current_tev"]].dropna(), on="company_name", how="inner"
-        )
-        if merged.empty or merged["current_tev"].sum() == 0: return None
-        return (merged[col] * merged["current_tev"]).sum() / merged["current_tev"].sum()
+    total_revenue = fs_filtered["ltm_revenue"].sum() \
+                    if not fs_filtered.empty and "ltm_revenue" in fs_filtered.columns else None
 
-    # Helper: simple mean of a column across companies
-    def _latest_mean(col):
-        if q_latest_snap.empty or col not in q_latest_snap.columns: return None
-        v = q_latest_snap[col].mean()
-        return None if pd.isna(v) else float(v)
+    total_ebitda  = fs_filtered["ltm_adj_ebitda"].sum() \
+                    if not fs_filtered.empty and "ltm_adj_ebitda" in fs_filtered.columns else None
 
-    # KPI tile values — use the most recent LTM figure from the CSV directly
-    total_tev     = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
-    total_revenue = (_latest_total("revenue") or _latest_total("net_sales") or
-                     (fs_filtered["ltm_revenue"].sum() if not fs_filtered.empty else None))
-    total_ebitda  = (_latest_total("adj_ebitda") or
-                     (fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None))
-    avg_leverage  = (_latest_wavg("net_leverage") or
-                     ((fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum()
-                      / fs_filtered["current_tev"].sum()
-                      if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None))
-    avg_margin    = (_latest_mean("adj_ebitda_margin_pct") or
-                     (fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None))
+    # TEV-weighted avg net leverage
+    if not fs_filtered.empty and "net_leverage" in fs_filtered.columns and \
+       "current_tev" in fs_filtered.columns and fs_filtered["current_tev"].sum() > 0:
+        avg_leverage = ((fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum()
+                        / fs_filtered["current_tev"].sum())
+    else:
+        avg_leverage = None
 
-    # Period-over-period Δ: compare most recent LTM vs prior period's most recent LTM
-    def _snap_total(snap, col):
-        if snap.empty or col not in snap.columns: return None
-        v = snap[col].sum()
-        return None if pd.isna(v) or v == 0 else float(v)
-
-    pop_ebitda = ((_snap_total(q_latest_snap, "adj_ebitda") or 0) -
-                  (_snap_total(q_prior_snap, "adj_ebitda") or 0)
-                  if not q_latest_snap.empty and not q_prior_snap.empty else None)
+    avg_margin    = fs_filtered["ltm_adj_ebitda_margin"].mean() \
+                    if not fs_filtered.empty and "ltm_adj_ebitda_margin" in fs_filtered.columns else None
 
     _period_label_str = {"Quarterly": "quarter", "Monthly": "month", "Yearly": "year"}.get(tab_period, "period")
 
@@ -772,6 +752,14 @@ def page_portfolio_overview():
     flag_row_cols = st.columns([1, 1, 1, 1, 1])
 
     # pop_ebitda already computed above from q_latest_snap vs q_prior_snap
+    # Use ltm_adj_ebitda from flags if available, otherwise fall back to quarterly
+    if not q_latest_snap.empty and not q_prior_snap.empty and "adj_ebitda" in q_latest_snap.columns:
+        _latest_ebitda = q_latest_snap["adj_ebitda"].sum()
+        _prior_ebitda  = q_prior_snap["adj_ebitda"].sum()
+        pop_ebitda = float(_latest_ebitda - _prior_ebitda) \
+                     if not pd.isna(_latest_ebitda) and not pd.isna(_prior_ebitda) else None
+    else:
+        pop_ebitda = None
 
     def _flag_box(col, value_str, label, flag, note=""):
         clr = {
@@ -806,13 +794,11 @@ def page_portfolio_overview():
         rev_str  = "—"
     _flag_box(flag_row_cols[1], rev_str, "Avg Rev Growth (YoY)", rev_flag, "portfolio average")
 
-    # Avg Net Leverage — from latest period snapshot
-    avg_lev_tile = (_wavg_col(q_latest_snap, "net_leverage", "revenue")
-                    if not q_latest_snap.empty else avg_leverage)
-    lev_flag = ("Green" if avg_lev_tile and avg_lev_tile < 5
-                else "Yellow" if avg_lev_tile and avg_lev_tile < 6 else "Red")
-    _flag_box(flag_row_cols[2], format_multiple(avg_lev_tile), "Avg Net Leverage",
-              lev_flag, f"latest {_period_label_str} · Red >6x")
+    # Avg Net Leverage — from fs_filtered (pre-calculated LTM)
+    lev_flag = ("Green" if avg_leverage and avg_leverage < 5
+                else "Yellow" if avg_leverage and avg_leverage < 6 else "Red")
+    _flag_box(flag_row_cols[2], format_multiple(avg_leverage), "Avg Net Leverage",
+              lev_flag, "wtd. by TEV · Red >6x")
 
     # Gross MOIC (pending)
     flag_row_cols[3].markdown(kpi_tile_pending("Gross MOIC"), unsafe_allow_html=True)
