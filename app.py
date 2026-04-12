@@ -16,8 +16,7 @@ from drilldown import (
 )
 from db import (
     load_portfolio_overview, load_fund_summary, load_company_master,
-    load_flags, load_ltm_snapshot, load_quarterly, load_monthly,
-    load_monthly_all, load_period_data, load_yoy_growth,
+    load_flags, load_ltm_snapshot, load_quarterly, load_yoy_growth,
     get_company_list, format_millions, format_multiple, format_pct,
     flag_color, flag_emoji
 )
@@ -602,8 +601,7 @@ def page_portfolio_overview():
     overview  = _ov_df.iloc[0]
     flags     = load_flags()
     fs        = load_fund_summary()
-    ltm_snap  = load_ltm_snapshot()   # pre-computed LTM — always correct
-    quarterly = load_quarterly()      # used for period-level charts
+    quarterly = load_quarterly()
 
     # -----------------------------------------------------------------------
     # FILTERS
@@ -630,8 +628,7 @@ def page_portfolio_overview():
                                          int(max(years)) if years else 2024),
                                   key="po_year") if years else None
         with fc4:
-            po_funds = sorted(fs["funds"].dropna().unique().tolist()) \
-                       if not fs.empty and "funds" in fs.columns else []
+            po_funds = sorted(fs["funds"].dropna().unique().tolist())                        if not fs.empty and "funds" in fs.columns else []
             sel_funds_po = st.multiselect("Fund", po_funds, default=po_funds,
                                            key="po_fund") if po_funds else []
         with fc5:
@@ -654,14 +651,8 @@ def page_portfolio_overview():
         fs_filtered = fs_filtered[fs_filtered["funds"].isin(sel_funds_po)]
 
     filtered_names = fs_filtered["company_name"].tolist()
-
-    # ── Load the right period data based on the toggle ─────────────────────
-    # Monthly toggle → use financials_monthly.csv (ATI gets true monthly rows;
-    #                   all others get their quarterly rows as-is)
-    # Quarterly/Yearly → use financials_quarterly.csv
-    period_data = load_period_data(tab_period)
-    q_filt = period_data[period_data["company_name"].isin(filtered_names)] \
-             if not fs_filtered.empty else period_data
+    q_filt = quarterly[quarterly["company_name"].isin(filtered_names)] \
+             if not fs_filtered.empty else quarterly
 
     # Apply global 3-year rolling window to all portfolio charts
     _three_yr_cutoff = pd.Timestamp.now() - pd.DateOffset(years=3)
@@ -670,22 +661,11 @@ def page_portfolio_overview():
         q_filt["cash_flow_date"] = pd.to_datetime(q_filt["cash_flow_date"], errors="coerce")
         q_filt = q_filt[q_filt["cash_flow_date"] >= _three_yr_cutoff]
 
-    # Also filter the quarterly data (used for period-PoP delta charts)
-    q_qtly = quarterly[quarterly["company_name"].isin(filtered_names)] \
-             if not fs_filtered.empty else quarterly
-    if not q_qtly.empty:
-        q_qtly = q_qtly.copy()
-        q_qtly["cash_flow_date"] = pd.to_datetime(q_qtly["cash_flow_date"], errors="coerce")
-        q_qtly = q_qtly[q_qtly["cash_flow_date"] >= _three_yr_cutoff]
-
     flags_filtered = flags[flags["company_name"].isin(filtered_names)] \
                      if not flags.empty else flags
 
-    # ── LTM snapshot filtered to selected companies ─────────────────────────
-    ltm_filtered = ltm_snap[ltm_snap["company_name"].isin(filtered_names)] \
-                   if not ltm_snap.empty else ltm_snap
-
-    # ── Period label helper ─────────────────────────────────────────────────
+    # Compute KPIs from filtered set — respecting the period filter
+    # Build a period-labelled version of q_filt so we can aggregate to latest period
     def _apply_period_label(df, mode):
         df = df.copy()
         df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
@@ -700,9 +680,7 @@ def page_portfolio_overview():
 
     q_period = _apply_period_label(q_filt, tab_period) if not q_filt.empty else pd.DataFrame()
 
-    # Latest period snapshot per company — used for period-over-period delta
-    # boxes in the flag summary and for per-period trend charts.
-    # NOTE: this is NOT used for the LTM KPI tiles (see below).
+    # Latest period snapshot per company (for tiles + flag summary)
     if not q_period.empty:
         q_latest_snap = (q_period.sort_values("cash_flow_date")
                                  .groupby("company_name").last().reset_index())
@@ -712,16 +690,7 @@ def page_portfolio_overview():
         q_latest_snap = pd.DataFrame()
         q_prior_snap  = pd.DataFrame()
 
-    # -----------------------------------------------------------------------
-    # KPI TILE VALUES
-    # -----------------------------------------------------------------------
-    # LTM Revenue and LTM EBITDA always come from ltm_snapshot (pre-computed,
-    # correct 4-quarter sum).  They do NOT depend on the period toggle — LTM
-    # is always the last 12 months regardless of how you view trends.
-    # The period toggle affects the trend charts and PoP delta boxes only.
-    #
-    # TEV, leverage and margin use the latest single-period values.
-
+    # KPI tile values — prefer period-aware quarterly data, fall back to fs_filtered
     def _sum_col(df, col):
         if df.empty or col not in df.columns: return None
         v = df[col].sum()
@@ -733,15 +702,11 @@ def page_portfolio_overview():
         if w.sum() == 0: return None
         return (df[val_col].fillna(0) * w).sum() / w.sum()
 
-    total_tev     = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
-
-    # ── LTM tiles: always use ltm_snapshot ──────────────────────────────────
-    total_revenue = (_sum_col(ltm_filtered, "ltm_revenue") or
+    total_tev     = fs_filtered["current_tev"].sum()    if not fs_filtered.empty else None
+    total_revenue = (_sum_col(q_latest_snap, "revenue") or
                      (fs_filtered["ltm_revenue"].sum() if not fs_filtered.empty else None))
-    total_ebitda  = (_sum_col(ltm_filtered, "ltm_adj_ebitda") or
+    total_ebitda  = (_sum_col(q_latest_snap, "adj_ebitda") or
                      (fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None))
-
-    # ── Leverage and margin: use latest period snapshot (point-in-time) ─────
     avg_leverage  = (_wavg_col(q_latest_snap, "net_leverage", "revenue") or
                      ((fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum()
                       / fs_filtered["current_tev"].sum()
@@ -750,6 +715,7 @@ def page_portfolio_overview():
                      if not q_latest_snap.empty and "adj_ebitda_margin_pct" in q_latest_snap.columns
                      else (fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None))
 
+    # Period label for tile subtitles
     _period_label_str = {"Quarterly": "quarter", "Monthly": "month", "Yearly": "year"}.get(tab_period, "period")
 
     # Alert banner removed per feedback (4/7/26)
@@ -782,38 +748,12 @@ def page_portfolio_overview():
     st.markdown('<div class="section-header">Portfolio Flag Summary</div>', unsafe_allow_html=True)
     flag_row_cols = st.columns([1, 1, 1, 1, 1])
 
-    # LTM EBITDA Δ — computed from yoy_growth (correct LTM-to-LTM comparison),
-    # not from q_latest_snap which would compare single period slices.
-    # Sum latest LTM adj_ebitda across filtered companies, then compare to
-    # the same companies' LTM adj_ebitda one year prior via ebitda_yoy.
-    yoy_data = load_yoy_growth()
-    yoy_data["cash_flow_date"] = pd.to_datetime(yoy_data["cash_flow_date"], errors="coerce")
-
-    if not yoy_data.empty and filtered_names:
-        yoy_filt = yoy_data[yoy_data["company_name"].isin(filtered_names)]
-        yoy_latest_co = (yoy_filt.sort_values("cash_flow_date")
-                                 .groupby("company_name").last().reset_index())
-        # Current LTM EBITDA: from ltm_filtered (pre-computed, correct)
-        curr_ltm_ebitda = ltm_filtered["ltm_adj_ebitda"].sum() if not ltm_filtered.empty else None
-        # Prior LTM EBITDA: back-calculate using ebitda_yoy
-        # prior = current / (1 + yoy) per company, then sum
-        if curr_ltm_ebitda is not None and not yoy_latest_co.empty:
-            prior_vals = []
-            for _, yr in yoy_latest_co.iterrows():
-                co = yr["company_name"]
-                ltm_row = ltm_filtered[ltm_filtered["company_name"] == co]
-                if ltm_row.empty: continue
-                curr_eb = ltm_row["ltm_adj_ebitda"].iloc[0]
-                yoy_val = yr.get("ebitda_yoy")
-                if pd.notna(curr_eb) and pd.notna(yoy_val) and yoy_val != -1:
-                    prior_vals.append(curr_eb / (1 + yoy_val))
-            prior_ltm_ebitda = sum(prior_vals) if prior_vals else None
-            pop_ebitda = (curr_ltm_ebitda - prior_ltm_ebitda) if (
-                prior_ltm_ebitda is not None and curr_ltm_ebitda is not None) else None
-        else:
-            pop_ebitda = None
+    # Compute period-over-period changes using the selected period granularity
+    if not q_latest_snap.empty and not q_prior_snap.empty:
+        pop_ebitda = (_sum_col(q_latest_snap, "adj_ebitda") or 0) - (_sum_col(q_prior_snap, "adj_ebitda") or 0)
+        pop_rev    = (_sum_col(q_latest_snap, "revenue") or 0)    - (_sum_col(q_prior_snap, "revenue") or 0)
     else:
-        pop_ebitda = None
+        pop_ebitda = pop_rev = None
 
     def _flag_box(col, value_str, label, flag, note=""):
         clr = {
@@ -836,7 +776,7 @@ def page_portfolio_overview():
     ebitda_str  = (f"{'▲' if pop_ebitda and pop_ebitda > 0 else '▼'} {format_millions(abs(pop_ebitda))}"
                    if pop_ebitda is not None else "—")
     _flag_box(flag_row_cols[0], ebitda_str, "LTM EBITDA Δ", ebitda_flag,
-              "vs prior year LTM")
+              f"vs prior {_period_label_str}")
 
     # Avg Revenue Growth (YoY from flags — point-in-time, won't change with period)
     if not flags_filtered.empty and "revenue_yoy" in flags_filtered.columns:
@@ -893,6 +833,7 @@ def page_portfolio_overview():
         chart_col, donut_col = st.columns([3, 1])
 
         with chart_col:
+            # Use tab-level period filter
             view_toggle = tab_period
 
             if view_toggle == "Yearly":
@@ -912,15 +853,13 @@ def page_portfolio_overview():
                     adj_ebitda     = ("adj_ebitda", "sum"),
                     cash_flow_date = ("cash_flow_date", "max")
                 ).reset_index().sort_values("cash_flow_date").tail(12)
-                chart_title = "Portfolio Revenue & EBITDA — Quarterly"
+                chart_title = "Portfolio Revenue & EBITDA — Quarterly LTM"
             else:
-                # Monthly — q_filt already holds the monthly-granularity data
-                # (ATI has true monthly rows; others show quarterly as-is)
+                # Monthly
                 q_filt_m = q_filt.copy()
-                q_filt_m["cash_flow_date"] = pd.to_datetime(
+                q_filt_m["month_label"] = pd.to_datetime(
                     q_filt_m["cash_flow_date"], errors="coerce"
-                )
-                q_filt_m["month_label"] = q_filt_m["cash_flow_date"].dt.strftime("%b %Y")
+                ).dt.strftime("%b %Y")
                 agg = q_filt_m.groupby("month_label").agg(
                     revenue        = ("revenue",    "sum"),
                     adj_ebitda     = ("adj_ebitda", "sum"),
@@ -1037,8 +976,7 @@ def page_portfolio_overview():
             label_visibility="collapsed"
         )
 
-        # Build period labels from q_filt — already routed to monthly/quarterly CSV
-        # q_filt is the correct granularity for the selected period toggle
+        # Build period labels from q_filt using the tab-level period setting
         _t1_q = q_filt.copy() if not q_filt.empty else pd.DataFrame()
         if not _t1_q.empty:
             _t1_q["cash_flow_date"] = pd.to_datetime(_t1_q["cash_flow_date"], errors="coerce")
@@ -1178,8 +1116,7 @@ def page_portfolio_overview():
 
         period_mode = tab_period
 
-        # Build period-labeled data — q_filt is already the correct granularity
-        # (monthly CSV for Monthly mode, quarterly CSV for Quarterly/Yearly)
+        # Build period-labeled quarterly data
         def _period_label(df, mode):
             df = df.copy()
             df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
@@ -2131,67 +2068,26 @@ def page_company_detail():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Revenue & EBITDA trend — with period toggle
-    col_period_sel, _ = st.columns([2, 6])
-    with col_period_sel:
-        co_period = st.radio("Period View", ["Quarterly", "Monthly", "Yearly"],
-                             key="co_detail_period", horizontal=True,
-                             label_visibility="collapsed")
-
-    # Load the right granularity for this company
-    co_data = load_period_data(co_period, selected)
-
-    if not co_data.empty:
-        co_data = co_data.copy()
-        co_data["cash_flow_date"] = pd.to_datetime(co_data["cash_flow_date"], errors="coerce")
-
-        # Build period label for x-axis
-        if co_period == "Monthly":
-            co_data["_plabel"] = co_data["cash_flow_date"].dt.strftime("%b %Y")
-        elif co_period == "Yearly":
-            co_data["_plabel"] = co_data["cash_flow_date"].dt.year.astype(str)
-        else:
-            co_data["_plabel"] = co_data.get("period_label",
-                co_data["cash_flow_date"].dt.to_period("Q").astype(str))
-
-        # For Yearly mode, aggregate to annual sums
-        if co_period == "Yearly":
-            co_data = co_data.groupby("_plabel").agg(
-                revenue        = ("revenue",               "sum"),
-                adj_ebitda     = ("adj_ebitda",            "sum"),
-                net_leverage   = ("net_leverage",          "last"),
-                adj_ebitda_margin_pct = ("adj_ebitda_margin_pct", "last"),
-                cash_flow_date = ("cash_flow_date",        "max"),
-            ).reset_index()
-
-        # Limit to 3 years rolling
-        _cutoff = pd.Timestamp.now() - pd.DateOffset(years=3)
-        co_data = co_data[co_data["cash_flow_date"] >= _cutoff]
-        co_data = co_data.sort_values("cash_flow_date")
-
+    # Revenue & EBITDA trend
+    quarterly = load_quarterly(selected)
+    if not quarterly.empty:
         st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
                     unsafe_allow_html=True)
 
-        # Show note for Monthly mode when company only has quarterly data
-        if co_period == "Monthly" and "period_granularity" in co_data.columns:
-            granularity = co_data["period_granularity"].iloc[0] if not co_data.empty else "Quarterly"
-            if granularity == "Quarterly":
-                st.caption(f"ℹ️ {selected} reports quarterly — monthly view shows the same quarterly data points.")
-
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Bar(
-            x=co_data["_plabel"],
-            y=co_data["revenue"].combine_first(co_data.get("net_sales", pd.Series(dtype=float))),
+            x=quarterly["period_label"],
+            y=quarterly["revenue"].combine_first(quarterly["net_sales"]),
             name="Revenue ($M)", marker_color=NAVY, opacity=0.8
         ), secondary_y=False)
         fig.add_trace(go.Bar(
-            x=co_data["_plabel"],
-            y=co_data["adj_ebitda"],
+            x=quarterly["period_label"],
+            y=quarterly["adj_ebitda"],
             name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8
         ), secondary_y=False)
-        margin = co_data["adj_ebitda"] / co_data["revenue"].replace(0, float("nan"))
+        margin = quarterly["adj_ebitda"] / quarterly["revenue"].replace(0, float("nan"))
         fig.add_trace(go.Scatter(
-            x=co_data["_plabel"], y=margin,
+            x=quarterly["period_label"], y=margin,
             name="EBITDA Margin %", mode="lines+markers",
             line=dict(color=XANTHOUS, width=2), marker=dict(size=5)
         ), secondary_y=True)
@@ -2206,17 +2102,13 @@ def page_company_detail():
         fig.update_xaxes(tickangle=-45)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Net Leverage & Margin charts — always use quarterly for these (point-in-time ratios)
-        quarterly = load_quarterly(selected)
-        quarterly = quarterly.sort_values("cash_flow_date") if not quarterly.empty else quarterly
-
         # Net Leverage trend
         col_lev, col_margin = st.columns(2)
 
         with col_lev:
             st.markdown('<div class="section-header">Net Leverage — Quarterly</div>',
                         unsafe_allow_html=True)
-            lev_df = quarterly.dropna(subset=["net_leverage"]) if not quarterly.empty else pd.DataFrame()
+            lev_df = quarterly.dropna(subset=["net_leverage"])
             if not lev_df.empty:
                 fig3 = go.Figure()
                 fig3.add_hline(y=6.0, line_dash="dash", line_color=RED_FLAG,
@@ -2240,7 +2132,7 @@ def page_company_detail():
         with col_margin:
             st.markdown('<div class="section-header">EBITDA Margin % — Quarterly</div>',
                         unsafe_allow_html=True)
-            mgn_df = quarterly.dropna(subset=["adj_ebitda_margin_pct"]) if not quarterly.empty else pd.DataFrame()
+            mgn_df = quarterly.dropna(subset=["adj_ebitda_margin_pct"])
             if not mgn_df.empty:
                 fig4 = go.Figure()
                 fig4.add_hline(y=0.18, line_dash="dash", line_color=SEA_GREEN,

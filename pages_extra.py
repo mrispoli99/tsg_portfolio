@@ -13,8 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from db import (
-    load_flags, load_ltm_snapshot, load_quarterly, load_monthly,
-    load_period_data, load_yoy_growth,
+    load_flags, load_ltm_snapshot, load_quarterly, load_yoy_growth,
     load_company_master, load_news, load_income_statement_ltm,
     load_consumer_kpis, get_company_list,
     format_millions, format_multiple, format_pct, flag_color, flag_emoji
@@ -484,20 +483,7 @@ def page_company_detail_enhanced():
     ])
 
     with tab1:
-        # Period toggle for Revenue/EBITDA trend chart
-        _trend_col, _ = st.columns([3, 5])
-        with _trend_col:
-            trend_period = st.radio(
-                "Trend Period",
-                ["Quarterly", "Monthly", "Yearly"],
-                key=f"co_trend_period_{selected}",
-                horizontal=True,
-                label_visibility="collapsed",
-            )
-
-        # Load the right granularity for the trend chart
-        quarterly = load_period_data(trend_period, selected)
-
+        quarterly = load_quarterly(selected)
         # Limit to most recent 3 years
         if not quarterly.empty and "cash_flow_date" in quarterly.columns:
             import pandas as _pd
@@ -505,49 +491,21 @@ def page_company_detail_enhanced():
             quarterly["cash_flow_date"] = _pd.to_datetime(quarterly["cash_flow_date"], errors="coerce")
             _cutoff = _pd.Timestamp.now() - _pd.DateOffset(years=3)
             quarterly = quarterly[quarterly["cash_flow_date"] >= _cutoff]
-
-        # Build period label for x-axis based on the selected mode
         if not quarterly.empty:
-            if trend_period == "Monthly":
-                quarterly["_plabel"] = quarterly["cash_flow_date"].dt.strftime("%b %Y")
-            elif trend_period == "Yearly":
-                # Aggregate to annual sums
-                quarterly["_plabel"] = quarterly["cash_flow_date"].dt.year.astype(str)
-                quarterly = quarterly.groupby("_plabel").agg(
-                    revenue              = ("revenue",               "sum"),
-                    adj_ebitda           = ("adj_ebitda",            "sum"),
-                    net_leverage         = ("net_leverage",          "last"),
-                    adj_ebitda_margin_pct= ("adj_ebitda_margin_pct", "last"),
-                    cash_flow_date       = ("cash_flow_date",        "max"),
-                ).reset_index()
-            else:
-                quarterly["_plabel"] = (quarterly["period_label"]
-                                        if "period_label" in quarterly.columns
-                                        else quarterly["cash_flow_date"].dt.to_period("Q").astype(str))
-            quarterly = quarterly.sort_values("cash_flow_date")
-
-        if not quarterly.empty:
-            # Show granularity note for Monthly if company only reports quarterly
-            if trend_period == "Monthly" and "period_granularity" in quarterly.columns:
-                gran = quarterly["period_granularity"].iloc[0]
-                if gran == "Quarterly":
-                    st.caption(f"ℹ️ {selected} files quarterly — monthly view shows the same quarterly data points.")
-
             # Revenue & EBITDA trend
             st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
                         unsafe_allow_html=True)
             from plotly.subplots import make_subplots
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            rev = quarterly["revenue"].combine_first(
-                quarterly.get("net_sales", _pd.Series(dtype=float)))
-            fig.add_trace(go.Bar(x=quarterly["_plabel"], y=rev,
+            rev = quarterly["revenue"].combine_first(quarterly["net_sales"])
+            fig.add_trace(go.Bar(x=quarterly["period_label"], y=rev,
                                   name="Revenue ($M)", marker_color=NAVY, opacity=0.8),
                           secondary_y=False)
-            fig.add_trace(go.Bar(x=quarterly["_plabel"], y=quarterly["adj_ebitda"],
+            fig.add_trace(go.Bar(x=quarterly["period_label"], y=quarterly["adj_ebitda"],
                                   name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8),
                           secondary_y=False)
             margin = quarterly["adj_ebitda"] / rev.replace(0, float("nan"))
-            fig.add_trace(go.Scatter(x=quarterly["_plabel"], y=margin,
+            fig.add_trace(go.Scatter(x=quarterly["period_label"], y=margin,
                                       name="EBITDA Margin %", mode="lines+markers",
                                       line=dict(color=XANTHOUS, width=2)),
                           secondary_y=True)
@@ -560,18 +518,12 @@ def page_company_detail_enhanced():
             fig.update_xaxes(tickangle=-45)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Leverage and Margin — always quarterly (point-in-time ratios)
-            q_ratios = load_quarterly(selected)
-            if not q_ratios.empty:
-                q_ratios = q_ratios.copy()
-                q_ratios["cash_flow_date"] = _pd.to_datetime(q_ratios["cash_flow_date"], errors="coerce")
-                q_ratios = q_ratios[q_ratios["cash_flow_date"] >= _cutoff].sort_values("cash_flow_date")
-
+            # Leverage and Margin side by side
             col_lev, col_mgn = st.columns(2)
             with col_lev:
                 st.markdown('<div class="section-header">Net Leverage</div>',
                             unsafe_allow_html=True)
-                lev_df = q_ratios.dropna(subset=["net_leverage"]) if not q_ratios.empty else _pd.DataFrame()
+                lev_df = quarterly.dropna(subset=["net_leverage"])
                 if not lev_df.empty:
                     fig3 = go.Figure()
                     fig3.add_hline(y=6.0, line_dash="dash", line_color=RED_FLAG,
@@ -594,7 +546,7 @@ def page_company_detail_enhanced():
             with col_mgn:
                 st.markdown('<div class="section-header">EBITDA Margin %</div>',
                             unsafe_allow_html=True)
-                mgn_df = q_ratios.dropna(subset=["adj_ebitda_margin_pct"]) if not q_ratios.empty else _pd.DataFrame()
+                mgn_df = quarterly.dropna(subset=["adj_ebitda_margin_pct"])
                 if not mgn_df.empty:
                     fig4 = go.Figure()
                     fig4.add_hline(y=0.18, line_dash="dash", line_color=SEA_GREEN,
@@ -624,7 +576,16 @@ def page_company_detail_enhanced():
         st.markdown('<div class="section-header">KPI Summary — Period View</div>',
                     unsafe_allow_html=True)
 
-        # Period mode selector — drives the KPI table granularity
+        # Reload full quarterly (not 3yr-filtered) for period label building
+        q_all_co = load_quarterly(selected)
+        if not q_all_co.empty and "cash_flow_date" in q_all_co.columns:
+            import pandas as _pd2
+            q_all_co = q_all_co.copy()
+            q_all_co["cash_flow_date"] = _pd2.to_datetime(q_all_co["cash_flow_date"], errors="coerce")
+            _co_cutoff = _pd2.Timestamp.now() - _pd2.DateOffset(years=3)
+            q_all_co = q_all_co[q_all_co["cash_flow_date"] >= _co_cutoff]
+
+        # Period mode selector — sits above this section only
         _pm_col, _ = st.columns([2, 5])
         with _pm_col:
             co_period_mode = st.radio(
@@ -634,15 +595,6 @@ def page_company_detail_enhanced():
                 key=f"co_period_mode_{selected}",
                 label_visibility="visible"
             )
-
-        # Load the right granularity for the KPI table
-        q_all_co = load_period_data(co_period_mode, selected)
-        if not q_all_co.empty and "cash_flow_date" in q_all_co.columns:
-            import pandas as _pd2
-            q_all_co = q_all_co.copy()
-            q_all_co["cash_flow_date"] = _pd2.to_datetime(q_all_co["cash_flow_date"], errors="coerce")
-            _co_cutoff = _pd2.Timestamp.now() - _pd2.DateOffset(years=3)
-            q_all_co = q_all_co[q_all_co["cash_flow_date"] >= _co_cutoff]
 
         if not q_all_co.empty:
             # Build period label per mode
@@ -654,12 +606,6 @@ def page_company_detail_enhanced():
                 q_all_co["_plabel"] = (q_all_co["period_label"]
                                        if "period_label" in q_all_co.columns
                                        else q_all_co["cash_flow_date"].dt.to_period("Q").astype(str))
-
-            # Granularity note
-            if co_period_mode == "Monthly" and "period_granularity" in q_all_co.columns:
-                gran = q_all_co["period_granularity"].iloc[0]
-                if gran == "Quarterly":
-                    st.caption(f"ℹ️ {selected} reports quarterly — monthly view shows quarterly data points.")
 
             # Sorted unique period labels
             all_co_periods = (q_all_co.sort_values("cash_flow_date")["_plabel"]
