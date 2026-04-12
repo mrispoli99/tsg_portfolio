@@ -647,26 +647,12 @@ def page_company_detail_enhanced():
                 st.session_state[_kpi_key] = CO_KPI_DEFS[0][0]
             active_co_kpi = st.session_state[_kpi_key]
 
-            # Flow items need LTM = sum of last 4 quarters up to each period end
-            # Stock/ratio items use latest single value
-            CO_FLOW_COLS = {
-                "revenue", "net_sales", "adj_ebitda", "gross_profit",
-                "free_cash_flow", "capex", "cash_interest_expense",
-                "change_in_nwc", "cash_taxes", "mandatory_principal",
-                "credit_agreement_ebitda",
-            }
-
             # Build pivot: rows = KPIs, cols = periods + Δ%
+            # The CSV already contains pre-calculated LTM figures.
+            # For each period, take the most recent row (latest cash_flow_date)
+            # — this handles multiple rows in the same period correctly.
             pivot_rows = []
             raw_vals   = {}
-
-            # Full unfiltered quarterly for this company (for LTM lookback)
-            q_full_co = load_quarterly(selected)
-            if not q_full_co.empty and "cash_flow_date" in q_full_co.columns:
-                q_full_co = q_full_co.copy()
-                q_full_co["cash_flow_date"] = _pd2.to_datetime(q_full_co["cash_flow_date"], errors="coerce")
-                q_full_co = q_full_co[q_full_co["cash_flow_date"] >= _co_cutoff]
-                q_full_co = q_full_co.sort_values("cash_flow_date")
 
             for lbl, col, fmt, is_pct, thresh_fn in CO_KPI_DEFS:
                 if col not in q_all_co.columns:
@@ -674,24 +660,13 @@ def page_company_detail_enhanced():
                 row = {"KPI": lbl}
                 raw_vals[lbl] = {}
                 prev_val = None
-                is_flow = col in CO_FLOW_COLS
 
                 for p in all_co_periods:
                     sub = q_all_co[q_all_co["_plabel"] == p]
                     if sub.empty:
                         val = None
-                    elif is_flow:
-                        # LTM = sum last 4 quarterly observations up to period end
-                        period_cutoff = sub["cash_flow_date"].max()
-                        lookback = (q_full_co[q_full_co["cash_flow_date"] <= period_cutoff]
-                                    if not q_full_co.empty else sub)
-                        last4 = lookback.tail(4)
-                        if col in last4.columns and not last4[col].isna().all():
-                            val = float(last4[col].sum())
-                        else:
-                            val = None
                     else:
-                        # Stock/ratio: latest value in this period
+                        # Most recent LTM value within the period
                         v = sub.sort_values("cash_flow_date").iloc[-1][col]
                         val = None if pd.isna(v) else float(v)
 
