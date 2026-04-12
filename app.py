@@ -680,7 +680,7 @@ def page_portfolio_overview():
 
     q_period = _apply_period_label(q_filt, tab_period) if not q_filt.empty else pd.DataFrame()
 
-    # Latest period snapshot per company (for tiles + flag summary)
+    # Latest period snapshot per company (for period-over-period Δ tiles)
     if not q_period.empty:
         q_latest_snap = (q_period.sort_values("cash_flow_date")
                                  .groupby("company_name").last().reset_index())
@@ -690,7 +690,50 @@ def page_portfolio_overview():
         q_latest_snap = pd.DataFrame()
         q_prior_snap  = pd.DataFrame()
 
-    # KPI tile values — prefer period-aware quarterly data, fall back to fs_filtered
+    # ------------------------------------------------------------------
+    # LTM = sum of last 4 quarters per company for flow items
+    # (revenue, adj_ebitda). This is the correct LTM calculation.
+    # Use ALL quarterly data (q_filt already 3yr-capped) not just latest period.
+    # ------------------------------------------------------------------
+    FLOW_ITEMS = ["revenue", "net_sales", "adj_ebitda", "gross_profit"]
+
+    def _ltm_sum(col):
+        """Sum last 4 quarters per company for a flow item, then total across portfolio."""
+        if q_filt.empty or col not in q_filt.columns:
+            return None
+        q_sorted = q_filt.sort_values("cash_flow_date")
+        ltm_per_co = (q_sorted.groupby("company_name")[col]
+                               .apply(lambda x: x.tail(4).sum())
+                               .reset_index(name="_ltm"))
+        # Only include companies in filtered set
+        ltm_per_co = ltm_per_co[
+            ltm_per_co["company_name"].isin(fs_filtered["company_name"])
+        ]
+        v = ltm_per_co["_ltm"].sum()
+        return None if pd.isna(v) or v == 0 else float(v)
+
+    def _ltm_latest(col):
+        """Latest single value per company for stock/ratio items, then portfolio average."""
+        if q_filt.empty or col not in q_filt.columns:
+            return None
+        latest = (q_filt.sort_values("cash_flow_date")
+                        .groupby("company_name")[col].last().reset_index())
+        latest = latest[latest["company_name"].isin(fs_filtered["company_name"])]
+        if latest.empty: return None
+        return latest[col].mean()
+
+    def _ltm_wavg(val_col, wt_col):
+        """TEV-weighted average of a ratio column across portfolio."""
+        if q_filt.empty or val_col not in q_filt.columns:
+            return None
+        latest_val = (q_filt.sort_values("cash_flow_date")
+                            .groupby("company_name")[val_col].last().reset_index())
+        merged = latest_val.merge(
+            fs_filtered[["company_name", wt_col]].dropna(), on="company_name", how="inner"
+        )
+        if merged.empty or merged[wt_col].sum() == 0: return None
+        return (merged[val_col] * merged[wt_col]).sum() / merged[wt_col].sum()
+
     def _sum_col(df, col):
         if df.empty or col not in df.columns: return None
         v = df[col].sum()
@@ -702,21 +745,29 @@ def page_portfolio_overview():
         if w.sum() == 0: return None
         return (df[val_col].fillna(0) * w).sum() / w.sum()
 
-    total_tev     = fs_filtered["current_tev"].sum()    if not fs_filtered.empty else None
-    total_revenue = (_sum_col(q_latest_snap, "revenue") or
+    total_tev     = fs_filtered["current_tev"].sum() if not fs_filtered.empty else None
+
+    # LTM Revenue = sum of last 4 quarters across all portfolio companies
+    total_revenue = (_ltm_sum("revenue") or _ltm_sum("net_sales") or
                      (fs_filtered["ltm_revenue"].sum() if not fs_filtered.empty else None))
-    total_ebitda  = (_sum_col(q_latest_snap, "adj_ebitda") or
+
+    # LTM EBITDA = sum of last 4 quarters
+    total_ebitda  = (_ltm_sum("adj_ebitda") or
                      (fs_filtered["ltm_adj_ebitda"].sum() if not fs_filtered.empty else None))
-    avg_leverage  = (_wavg_col(q_latest_snap, "net_leverage", "revenue") or
+
+    # Avg Net Leverage = TEV-weighted latest quarterly value
+    avg_leverage  = (_ltm_wavg("net_leverage", "current_tev") or
                      ((fs_filtered["net_leverage"] * fs_filtered["current_tev"]).sum()
                       / fs_filtered["current_tev"].sum()
                       if not fs_filtered.empty and fs_filtered["current_tev"].sum() > 0 else None))
-    avg_margin    = (q_latest_snap["adj_ebitda_margin_pct"].mean()
-                     if not q_latest_snap.empty and "adj_ebitda_margin_pct" in q_latest_snap.columns
-                     else (fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None))
+
+    # Avg EBITDA Margin = simple mean of latest quarterly value
+    avg_margin    = (_ltm_latest("adj_ebitda_margin_pct") or
+                     (fs_filtered["ltm_adj_ebitda_margin"].mean() if not fs_filtered.empty else None))
 
     # Period label for tile subtitles
     _period_label_str = {"Quarterly": "quarter", "Monthly": "month", "Yearly": "year"}.get(tab_period, "period")
+
 
     # Alert banner removed per feedback (4/7/26)
 
@@ -748,12 +799,40 @@ def page_portfolio_overview():
     st.markdown('<div class="section-header">Portfolio Flag Summary</div>', unsafe_allow_html=True)
     flag_row_cols = st.columns([1, 1, 1, 1, 1])
 
-    # Compute period-over-period changes using the selected period granularity
-    if not q_latest_snap.empty and not q_prior_snap.empty:
-        pop_ebitda = (_sum_col(q_latest_snap, "adj_ebitda") or 0) - (_sum_col(q_prior_snap, "adj_ebitda") or 0)
-        pop_rev    = (_sum_col(q_latest_snap, "revenue") or 0)    - (_sum_col(q_prior_snap, "revenue") or 0)
+    # Compute period-over-period LTM changes
+    # For each company: LTM at latest period vs LTM at prior period
+    if not q_period.empty and not q_latest_snap.empty and not q_prior_snap.empty:
+        # Get the latest and prior period labels per company
+        latest_labels = q_latest_snap.set_index("company_name")["_plabel"].to_dict() \
+                        if "_plabel" in q_latest_snap.columns else {}
+        prior_labels  = q_prior_snap.set_index("company_name")["_plabel"].to_dict() \
+                        if "_plabel" in q_prior_snap.columns else {}
+
+        def _ltm_sum_at_period(col, period_label_map):
+            """Sum last 4 quarters up to and including the period for each company."""
+            totals = []
+            for cname, plabel in period_label_map.items():
+                co = q_filt[q_filt["company_name"] == cname].sort_values("cash_flow_date")
+                if col not in co.columns or co.empty:
+                    continue
+                # Get all rows up to the period's last date
+                period_rows = q_period[(q_period["company_name"] == cname) &
+                                       (q_period["_plabel"] == plabel)]
+                if period_rows.empty:
+                    continue
+                cutoff = period_rows["cash_flow_date"].max()
+                co_up_to = co[co["cash_flow_date"] <= cutoff].tail(4)
+                if not co_up_to[col].isna().all():
+                    totals.append(co_up_to[col].sum())
+            return sum(totals) if totals else None
+
+        ltm_ebitda_latest = _ltm_sum_at_period("adj_ebitda", latest_labels)
+        ltm_ebitda_prior  = _ltm_sum_at_period("adj_ebitda", prior_labels)
+        pop_ebitda = ((ltm_ebitda_latest or 0) - (ltm_ebitda_prior or 0)
+                      if ltm_ebitda_latest is not None and ltm_ebitda_prior is not None
+                      else None)
     else:
-        pop_ebitda = pop_rev = None
+        pop_ebitda = None
 
     def _flag_box(col, value_str, label, flag, note=""):
         clr = {
@@ -1901,14 +1980,14 @@ def page_portfolio_overview():
             """, unsafe_allow_html=True)
 
             btn_c1, btn_c2 = col.columns(2)
-            if btn_c1.button("View Company Detail", key=f"t3_detail_{cname}",
+            if btn_c1.button("View Company Detail", key=f"t3_detail_{i}_{cname}",
                               use_container_width=True):
                 st.session_state["page"]             = "company_detail"
                 st.session_state["selected_company"] = cname
                 for k in ["drill_page", "drill_company", "drill_metric"]:
                     st.session_state.pop(k, None)
                 st.rerun()
-            if btn_c2.button("View Company Alerts", key=f"t3_alerts_{cname}",
+            if btn_c2.button("View Company Alerts", key=f"t3_alerts_{i}_{cname}",
                               use_container_width=True):
                 st.session_state["page"]              = "flags_alerts"
                 st.session_state["flag_filter_company"] = cname

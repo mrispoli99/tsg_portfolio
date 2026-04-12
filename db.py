@@ -51,6 +51,73 @@ def load_ltm_snapshot() -> pd.DataFrame:
     return _csv("ltm_snapshot.csv")
 
 @st.cache_data
+def load_ltm_computed() -> pd.DataFrame:
+    """
+    Compute LTM (Last Twelve Months) figures from quarterly data.
+    - Flow items (revenue, ebitda, etc.): sum of last 4 quarters per company
+    - Stock/ratio items (leverage, coverage, etc.): value from latest quarter
+
+    Returns one row per company with ltm_ prefixed columns.
+    Falls back to ltm_snapshot.csv if quarterly data is insufficient.
+    """
+    df = load_quarterly_all()
+    snapshot = _csv("ltm_snapshot.csv")
+
+    if df.empty:
+        return snapshot
+
+    df = df.copy()
+    df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+    df = df.sort_values("cash_flow_date")
+
+    # Columns that are FLOW items — need to be summed over 4 quarters for LTM
+    FLOW_COLS = [
+        "revenue", "net_sales", "adj_ebitda", "gross_profit",
+        "cash_interest_expense", "capex", "change_in_nwc", "cash_taxes",
+        "mandatory_principal", "free_cash_flow", "credit_agreement_ebitda",
+        "floating_rate_debt", "fixed_rate_debt", "pik_debt",
+    ]
+    # Columns that are STOCK / RATIO items — take latest quarter value
+    STOCK_COLS = [
+        "net_leverage", "gross_leverage", "senior_secured_leverage",
+        "interest_coverage", "debt_service_coverage",
+        "total_gross_debt", "net_debt", "cash",
+        "adj_ebitda_margin_pct", "gross_margin_pct",
+        "tev_to_revenue", "tev_to_ebitda",
+    ]
+
+    rows = []
+    for cname, grp in df.groupby("company_name"):
+        grp = grp.sort_values("cash_flow_date")
+        last4 = grp.tail(4)
+        latest = grp.iloc[-1]
+        row = {"company_name": cname}
+
+        for col in FLOW_COLS:
+            if col in last4.columns and not last4[col].isna().all():
+                row[f"ltm_{col}"] = last4[col].sum()
+            else:
+                row[f"ltm_{col}"] = None
+
+        for col in STOCK_COLS:
+            if col in latest.index and not pd.isna(latest[col]):
+                row[f"ltm_{col}"] = latest[col]
+            else:
+                row[f"ltm_{col}"] = None
+
+        row["ltm_as_of"] = str(latest["cash_flow_date"])[:10] if not pd.isna(latest["cash_flow_date"]) else None
+        rows.append(row)
+
+    computed = pd.DataFrame(rows)
+
+    # Merge with snapshot — snapshot takes priority where it has data
+    if not snapshot.empty and "company_name" in snapshot.columns:
+        merged = computed.merge(snapshot, on="company_name", how="left", suffixes=("_computed", ""))
+        return merged
+
+    return computed
+
+@st.cache_data
 def load_quarterly_all() -> pd.DataFrame:
     return _csv("financials_quarterly.csv")
 
@@ -59,35 +126,6 @@ def load_quarterly(company_name: str = None) -> pd.DataFrame:
     if company_name and not df.empty:
         df = df[df["company_name"] == company_name]
     return df
-
-@st.cache_data
-def load_monthly_all() -> pd.DataFrame:
-    """Monthly-granularity financials.
-    Companies that file monthly (e.g. ATI) have one row per calendar month.
-    All other companies fall back to their quarterly rows, so this CSV is a
-    superset of financials_quarterly.csv with finer detail where available.
-    """
-    df = _csv("financials_monthly.csv")
-    if df.empty:
-        # Graceful fallback: if the monthly CSV hasn't been generated yet,
-        # return the quarterly data so the dashboard still works.
-        return load_quarterly_all()
-    return df
-
-def load_monthly(company_name: str = None) -> pd.DataFrame:
-    df = load_monthly_all()
-    if company_name and not df.empty:
-        df = df[df["company_name"] == company_name]
-    return df
-
-def load_period_data(period_mode: str, company_name: str = None) -> pd.DataFrame:
-    """Return the right granularity DataFrame for the given period toggle value.
-    period_mode: 'Quarterly' | 'Monthly' | 'Yearly'
-    For 'Yearly' the quarterly data is used and aggregation happens in the app.
-    """
-    if period_mode == "Monthly":
-        return load_monthly(company_name)
-    return load_quarterly(company_name)
 
 @st.cache_data
 def load_yoy_all() -> pd.DataFrame:
