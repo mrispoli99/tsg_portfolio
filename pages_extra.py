@@ -599,10 +599,16 @@ def page_company_detail_enhanced():
         if not q_all_co.empty:
             # Build period label per mode
             if co_period_mode == "Monthly":
+                if "period" in q_all_co.columns:
+                    q_all_co = q_all_co[q_all_co["period"] == "Monthly"]
                 q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.strftime("%b %Y")
             elif co_period_mode == "Yearly":
-                q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.year.astype(str)
+                if "period" in q_all_co.columns:
+                    q_all_co = q_all_co[q_all_co["period"] == "Annual"]
+                q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.strftime("%Y-%m")
             else:
+                if "period" in q_all_co.columns:
+                    q_all_co = q_all_co[q_all_co["period"] == "Quarterly"]
                 q_all_co["_plabel"] = (q_all_co["period_label"]
                                        if "period_label" in q_all_co.columns
                                        else q_all_co["cash_flow_date"].dt.to_period("Q").astype(str))
@@ -666,9 +672,15 @@ def page_company_detail_enhanced():
                     if sub.empty:
                         val = None
                     else:
-                        # Most recent LTM value within the period
-                        v = sub.sort_values("cash_flow_date").iloc[-1][col]
-                        val = None if pd.isna(v) else float(v)
+                        sub = sub.sort_values("cash_flow_date")
+                        # Prefer ltm_ prefixed column (pre-calculated LTM from SQL)
+                        val = None
+                        for try_col in [f"ltm_{col}", col]:
+                            if try_col in sub.columns:
+                                v = sub.iloc[-1][try_col]
+                                if not pd.isna(v):
+                                    val = float(v)
+                                    break
 
                     raw_vals[lbl][p] = val
                     row[p] = fmt(val) if val is not None else "—"

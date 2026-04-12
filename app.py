@@ -672,12 +672,22 @@ def page_portfolio_overview():
     # cash_flow_date (most recent LTM as of that period).
     # -----------------------------------------------------------------------
     def _apply_period_label(df, mode):
+        """Filter to the right period type and assign _plabel from cash_flow_date."""
         df = df.copy()
         df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+
+        # Filter by the period column if it exists (Quarterly / Annual / Monthly)
+        if "period" in df.columns:
+            period_filter = {"Quarterly": "Quarterly",
+                             "Yearly":    "Annual",
+                             "Monthly":   "Monthly"}.get(mode, "Quarterly")
+            df = df[df["period"] == period_filter]
+
+        # Assign display label from cash_flow_date
         if mode == "Monthly":
             df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
         elif mode == "Yearly":
-            df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+            df["_plabel"] = df["cash_flow_date"].dt.strftime("%Y-%m")  # keep full date for sorting
         else:
             df["_plabel"] = (df["period_label"] if "period_label" in df.columns
                              else df["cash_flow_date"].dt.to_period("Q").astype(str))
@@ -837,40 +847,37 @@ def page_portfolio_overview():
         chart_col, donut_col = st.columns([3, 1])
 
         with chart_col:
-            # Use tab-level period filter
             view_toggle = tab_period
 
-            if view_toggle == "Yearly":
-                q_filt_y = q_filt.copy()
-                q_filt_y["year_label"] = pd.to_datetime(
-                    q_filt_y["cash_flow_date"], errors="coerce").dt.year.astype(str)
-                agg = q_filt_y.groupby("year_label").agg(
-                    revenue        = ("revenue",    "sum"),
-                    adj_ebitda     = ("adj_ebitda", "sum"),
-                    cash_flow_date = ("cash_flow_date", "max")
-                ).reset_index().rename(columns={"year_label": "period_label"})
-                agg = agg.sort_values("cash_flow_date").tail(10)
-                chart_title = "Portfolio Revenue & EBITDA — Yearly LTM"
-            elif view_toggle == "Quarterly" or q_filt.empty:
-                agg = q_filt.groupby("period_label").agg(
-                    revenue        = ("revenue",    "sum"),
-                    adj_ebitda     = ("adj_ebitda", "sum"),
-                    cash_flow_date = ("cash_flow_date", "max")
-                ).reset_index().sort_values("cash_flow_date").tail(12)
-                chart_title = "Portfolio Revenue & EBITDA — Quarterly LTM"
+            # Filter q_filt by the period type column, then group by cash_flow_date
+            # Values are already LTM — just sum across companies per period date
+            period_filter_map = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}
+            pf = period_filter_map.get(view_toggle, "Quarterly")
+
+            if not q_filt.empty and "period" in q_filt.columns:
+                q_chart = q_filt[q_filt["period"] == pf].copy()
             else:
-                # Monthly
-                q_filt_m = q_filt.copy()
-                q_filt_m["month_label"] = pd.to_datetime(
-                    q_filt_m["cash_flow_date"], errors="coerce"
-                ).dt.strftime("%b %Y")
-                agg = q_filt_m.groupby("month_label").agg(
+                q_chart = q_filt.copy()
+
+            q_chart["cash_flow_date"] = pd.to_datetime(q_chart["cash_flow_date"], errors="coerce")
+            q_chart = q_chart.sort_values("cash_flow_date")
+
+            if not q_chart.empty and "revenue" in q_chart.columns:
+                agg = q_chart.groupby("cash_flow_date").agg(
                     revenue        = ("revenue",    "sum"),
                     adj_ebitda     = ("adj_ebitda", "sum"),
-                    cash_flow_date = ("cash_flow_date", "max")
-                ).reset_index().rename(columns={"month_label": "period_label"})
-                agg = agg.sort_values("cash_flow_date").tail(18)
-                chart_title = "Portfolio Revenue & EBITDA — Monthly"
+                ).reset_index().sort_values("cash_flow_date").tail(
+                    10 if view_toggle == "Yearly" else 18 if view_toggle == "Monthly" else 12
+                )
+                agg["period_label"] = agg["cash_flow_date"].dt.strftime(
+                    "%Y" if view_toggle == "Yearly" else
+                    "%b %Y" if view_toggle == "Monthly" else
+                    "%b %Y"
+                )
+            else:
+                agg = pd.DataFrame()
+
+            chart_title = f"Portfolio Revenue & EBITDA — {view_toggle} LTM"
 
             if not agg.empty:
                 st.markdown(f'<div class="section-header">{chart_title}</div>',
@@ -984,10 +991,15 @@ def page_portfolio_overview():
         _t1_q = q_filt.copy() if not q_filt.empty else pd.DataFrame()
         if not _t1_q.empty:
             _t1_q["cash_flow_date"] = pd.to_datetime(_t1_q["cash_flow_date"], errors="coerce")
+            # Filter to correct period type
+            _pf_map = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}
+            if "period" in _t1_q.columns:
+                _t1_q = _t1_q[_t1_q["period"] == _pf_map.get(tab_period, "Quarterly")]
+            # Assign display label
             if tab_period == "Monthly":
                 _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%b %Y")
             elif tab_period == "Yearly":
-                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.year.astype(str)
+                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%Y-%m")
             else:
                 _t1_q["_plabel"] = (_t1_q["period_label"] if "period_label" in _t1_q.columns
                                     else _t1_q["cash_flow_date"].dt.to_period("Q").astype(str))
@@ -1004,12 +1016,16 @@ def page_portfolio_overview():
 
         def _t1_get_val(cname, period):
             if _t1_src == "q":
-                if _t1_q.empty or _t1_col not in _t1_q.columns:
-                    return None
+                if _t1_q.empty: return None
                 sub = _t1_q[(_t1_q["company_name"] == cname) & (_t1_q["_plabel"] == period)]
                 if sub.empty: return None
-                v = sub.sort_values("cash_flow_date").iloc[-1][_t1_col]
-                return None if pd.isna(v) else float(v)
+                sub = sub.sort_values("cash_flow_date")
+                # Prefer ltm_ prefixed column if it exists (pre-calculated LTM)
+                for try_col in [f"ltm_{_t1_col}", _t1_col]:
+                    if try_col in sub.columns:
+                        v = sub.iloc[-1][try_col]
+                        if not pd.isna(v): return float(v)
+                return None
             elif _t1_src == "fs":
                 sub = fs_filtered[fs_filtered["company_name"] == cname]
                 if sub.empty or _t1_col not in sub.columns: return None
@@ -1124,10 +1140,15 @@ def page_portfolio_overview():
         def _period_label(df, mode):
             df = df.copy()
             df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+            # Filter to correct period type using the period column
+            if "period" in df.columns:
+                pf = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}.get(mode, "Quarterly")
+                df = df[df["period"] == pf]
+            # Assign display label
             if mode == "Monthly":
                 df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
             elif mode == "Yearly":
-                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+                df["_plabel"] = df["cash_flow_date"].dt.strftime("%Y-%m")
             else:
                 df["_plabel"] = (df["period_label"] if "period_label" in df.columns
                                  else df["cash_flow_date"].dt.to_period("Q").astype(str))
@@ -1167,13 +1188,16 @@ def page_portfolio_overview():
         def _get_snap_val(cname, metric_def):
             lbl, col, src, fmt, is_pct, cat = metric_def
             if src == "q":
-                if q_prep.empty or col not in q_prep.columns or selected_period is None:
-                    return None
+                if q_prep.empty or selected_period is None: return None
                 sub = q_prep[(q_prep["company_name"] == cname) &
                              (q_prep["_plabel"] == selected_period)]
                 if sub.empty: return None
-                v = sub.sort_values("cash_flow_date").iloc[-1][col]
-                return None if pd.isna(v) else v
+                sub = sub.sort_values("cash_flow_date")
+                for try_col in [f"ltm_{col}", col]:
+                    if try_col in sub.columns:
+                        v = sub.iloc[-1][try_col]
+                        if not pd.isna(v): return v
+                return None
             elif src == "fs":
                 sub = fs_filtered[fs_filtered["company_name"] == cname]
                 if sub.empty or col not in sub.columns: return None
@@ -1263,11 +1287,15 @@ def page_portfolio_overview():
         def _get_val(cname, period, metric_def):
             lbl, col, src, fmt, is_pct, cat = metric_def
             if src == "q":
-                if q_prep.empty or col not in q_prep.columns: return None
+                if q_prep.empty: return None
                 sub = q_prep[(q_prep["company_name"] == cname) & (q_prep["_plabel"] == period)]
                 if sub.empty: return None
-                v = sub.sort_values("cash_flow_date").iloc[-1][col]
-                return None if pd.isna(v) else v
+                sub = sub.sort_values("cash_flow_date")
+                for try_col in [f"ltm_{col}", col]:
+                    if try_col in sub.columns:
+                        v = sub.iloc[-1][try_col]
+                        if not pd.isna(v): return v
+                return None
             elif src == "fs":
                 sub = fs_filtered[fs_filtered["company_name"] == cname]
                 if sub.empty or col not in sub.columns: return None
@@ -1279,11 +1307,14 @@ def page_portfolio_overview():
                 v = sub.iloc[0][col]
                 return None if pd.isna(v) else v
 
-        if m_src == "q" and not q_prep.empty and m_col in q_prep.columns:
-            kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", m_col]].dropna(subset=[m_col]).copy()
+        # Resolve actual column to use for chart (prefer ltm_ prefixed)
+        _m_actual_col = f"ltm_{m_col}" if (not q_prep.empty and f"ltm_{m_col}" in q_prep.columns) else m_col
+
+        if m_src == "q" and not q_prep.empty and _m_actual_col in q_prep.columns:
+            kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", _m_actual_col]].dropna(subset=[_m_actual_col]).copy()
             kpi_ts = kpi_ts.sort_values("cash_flow_date")
-            kpi_ts["_prev"] = kpi_ts.groupby("company_name")[m_col].shift(1)
-            kpi_ts["_chg"]  = kpi_ts[m_col] - kpi_ts["_prev"]
+            kpi_ts["_prev"] = kpi_ts.groupby("company_name")[_m_actual_col].shift(1)
+            kpi_ts["_chg"]  = kpi_ts[_m_actual_col] - kpi_ts["_prev"]
             kpi_ts = kpi_ts.dropna(subset=["_chg"])
             if display_periods:
                 kpi_ts = kpi_ts[kpi_ts["_plabel"].isin(display_periods)]
