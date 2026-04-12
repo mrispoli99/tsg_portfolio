@@ -114,8 +114,9 @@ def load_quarterly_all() -> pd.DataFrame:
         st.warning(f"Cannot parse financials CSV. Columns: {list(df.columns)}")
         return df
 
-    # Parse dates and numeric value
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    # Filter to Actual version only — exclude At-Entry and Budget
+    if "version" in df.columns:
+        df = df[df["version"] == "Actual"]
     if as_of_col:
         df[as_of_col] = pd.to_datetime(df[as_of_col], errors="coerce")
     df[val_col] = pd.to_numeric(df[val_col], errors="coerce")
