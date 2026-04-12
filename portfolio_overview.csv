@@ -1,2 +1,2 @@
-active_company_count,total_tev,total_ltm_revenue,total_ltm_ebitda,total_ltm_adj_ebitda,avg_net_leverage_wtd,avg_net_leverage,avg_ebitda_margin,avg_adj_ebitda_margin,red_flag_count,yellow_flag_count,green_flag_count
-19,70927.00412900001,15121.428882000002,2809.6446389999996,3408.256887,4.228617697143011,21.919707499999998,0.21486693178486996,0.23001750595974838,11,3,5
+active_company_count,total_tev,total_ltm_revenue,total_ltm_ebitda,avg_net_leverage_wtd,avg_net_leverage,portfolio_ebitda_margin,avg_adj_ebitda_margin,avg_gross_margin,red_flag_count,yellow_flag_count,green_flag_count,na_flag_count
+16,70927.00412900001,15678.141898000002,1462.4839849999998,4.608126979922313,20.33604264285714,0.09328171632293768,0.1838049737140609,0.5324463846153846,14,2,0,0
