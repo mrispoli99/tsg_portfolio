@@ -61,6 +61,35 @@ def load_quarterly(company_name: str = None) -> pd.DataFrame:
     return df
 
 @st.cache_data
+def load_monthly_all() -> pd.DataFrame:
+    """Monthly-granularity financials.
+    Companies that file monthly (e.g. ATI) have one row per calendar month.
+    All other companies fall back to their quarterly rows, so this CSV is a
+    superset of financials_quarterly.csv with finer detail where available.
+    """
+    df = _csv("financials_monthly.csv")
+    if df.empty:
+        # Graceful fallback: if the monthly CSV hasn't been generated yet,
+        # return the quarterly data so the dashboard still works.
+        return load_quarterly_all()
+    return df
+
+def load_monthly(company_name: str = None) -> pd.DataFrame:
+    df = load_monthly_all()
+    if company_name and not df.empty:
+        df = df[df["company_name"] == company_name]
+    return df
+
+def load_period_data(period_mode: str, company_name: str = None) -> pd.DataFrame:
+    """Return the right granularity DataFrame for the given period toggle value.
+    period_mode: 'Quarterly' | 'Monthly' | 'Yearly'
+    For 'Yearly' the quarterly data is used and aggregation happens in the app.
+    """
+    if period_mode == "Monthly":
+        return load_monthly(company_name)
+    return load_quarterly(company_name)
+
+@st.cache_data
 def load_yoy_all() -> pd.DataFrame:
     return _csv("yoy_growth.csv")
 
