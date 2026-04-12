@@ -699,10 +699,15 @@ def page_company_detail_enhanced():
                     styles = []
                     for col_name in row.index:
                         is_active = (row.name == active_co_kpi)
-                        bg  = "background:#EFF3F8;" if is_active else ""
-                        fw  = "font-weight:700;" if is_active else ""
-                        clr = ""
-                        if col_name.startswith("Δ "):
+                        if is_active:
+                            bg  = "background-color:#071733;"
+                            fw  = "font-weight:700;"
+                            clr = "color:#FFFFFF;"
+                        else:
+                            bg  = ""
+                            fw  = ""
+                            clr = ""
+                        if not is_active and col_name.startswith("Δ "):
                             s = str(row[col_name])
                             if s.startswith("+"): clr = f"color:{SEA_GREEN};"
                             elif s.startswith("-"): clr = f"color:{RED_FLAG};"
@@ -726,18 +731,44 @@ def page_company_detail_enhanced():
                 st.markdown('<div class="section-header">Select Metric for Chart Below</div>',
                             unsafe_allow_html=True)
 
+                # Inject CSS so active button is navy + white text, inactive is
+                # white + navy text with a border — both always clearly readable.
+                st.markdown("""
+                <style>
+                .kpi-btn-active > div > button {
+                    background-color: #071733 !important;
+                    color: #FFFFFF !important;
+                    border: 2px solid #071733 !important;
+                    font-weight: 700 !important;
+                    border-radius: 6px !important;
+                }
+                .kpi-btn-inactive > div > button {
+                    background-color: #FFFFFF !important;
+                    color: #071733 !important;
+                    border: 1px solid #CBD3DE !important;
+                    font-weight: 400 !important;
+                    border-radius: 6px !important;
+                }
+                .kpi-btn-inactive > div > button:hover {
+                    background-color: #F4F6F9 !important;
+                    border-color: #071733 !important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
                 kpi_names_avail = [r["KPI"] for r in pivot_rows]
                 btn_cols = st.columns(min(len(kpi_names_avail), 4))
                 for i, kpi_lbl in enumerate(kpi_names_avail):
                     is_active_btn = (kpi_lbl == active_co_kpi)
-                    if btn_cols[i % 4].button(
-                        kpi_lbl,
-                        key=f"co_kpi_btn_{selected}_{kpi_lbl}",
-                        use_container_width=True,
-                        type="primary" if is_active_btn else "secondary"
-                    ):
-                        st.session_state[_kpi_key] = kpi_lbl
-                        st.rerun()
+                    css_class = "kpi-btn-active" if is_active_btn else "kpi-btn-inactive"
+                    with btn_cols[i % 4]:
+                        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+                        if st.button(kpi_lbl,
+                                     key=f"co_kpi_btn_{selected}_{kpi_lbl}",
+                                     use_container_width=True):
+                            st.session_state[_kpi_key] = kpi_lbl
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
 
                 # ----------------------------------------------------------------
                 # PERIOD-OVER-PERIOD CHART — for the selected KPI, this company only

@@ -1076,6 +1076,101 @@ def page_portfolio_overview():
             st.dataframe(_t1_styled, use_container_width=True,
                          height=min(600, len(_t1_rows) * 38 + 50))
             st.caption(f"**{_t1_sel}** · {tab_period} · Δ% = change vs prior period")
+
+            # ----------------------------------------------------------------
+            # COMBO CHART — absolute KPI bars + Δ% line, per company over time
+            # ----------------------------------------------------------------
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="section-header">{_t1_sel} — Trend & Period-over-Period Δ%</div>',
+                unsafe_allow_html=True
+            )
+            st.caption("Bars = absolute value (left axis) · Line = % change vs prior period (right axis) · one series per company")
+
+            if not _t1_q.empty and _t1_src == "q":
+                # Resolve actual column name (prefer ltm_ prefixed)
+                _t1_resolved_col = None
+                for try_col in [f"ltm_{_t1_col}", _t1_col]:
+                    if try_col in _t1_q.columns:
+                        _t1_resolved_col = try_col
+                        break
+
+                if _t1_resolved_col:
+                    from plotly.subplots import make_subplots as _msp_t1
+                    _fig_combo = _msp_t1(specs=[[{"secondary_y": True}]])
+
+                    _combo_colors = COMPANY_COLORS
+                    for ci, cname in enumerate(_t1_companies):
+                        _co_ts = (
+                            _t1_q[_t1_q["company_name"] == cname][["_plabel", "cash_flow_date", _t1_resolved_col]]
+                            .dropna(subset=[_t1_resolved_col])
+                            .sort_values("cash_flow_date")
+                            .copy()
+                        )
+                        if _co_ts.empty:
+                            continue
+                        _co_ts["_prev"] = _co_ts[_t1_resolved_col].shift(1)
+                        _co_ts["_chg"] = (
+                            (_co_ts[_t1_resolved_col] - _co_ts["_prev"]) / _co_ts["_prev"].abs()
+                        ).where(_co_ts["_prev"].notna() & (_co_ts["_prev"] != 0))
+
+                        _clr = _combo_colors[ci % len(_combo_colors)]
+
+                        # Bars — absolute value
+                        _fig_combo.add_trace(
+                            go.Bar(
+                                x=_co_ts["_plabel"],
+                                y=_co_ts[_t1_resolved_col],
+                                name=cname,
+                                marker_color=_clr,
+                                opacity=0.75,
+                                legendgroup=cname,
+                                showlegend=True,
+                            ),
+                            secondary_y=False,
+                        )
+                        # Line — Δ%
+                        _fig_combo.add_trace(
+                            go.Scatter(
+                                x=_co_ts["_plabel"],
+                                y=_co_ts["_chg"],
+                                name=f"{cname} Δ%",
+                                mode="lines+markers",
+                                line=dict(color=_clr, width=1.5, dash="dot"),
+                                marker=dict(size=4),
+                                legendgroup=cname,
+                                showlegend=False,
+                            ),
+                            secondary_y=True,
+                        )
+
+                    # Y-axis format depends on metric type
+                    _y_fmt = ".0%" if _t1_is_pct else ",.0f"
+                    _fig_combo.update_yaxes(
+                        tickformat=_y_fmt, gridcolor=BORDER, secondary_y=False,
+                        title_text=_t1_sel, title_font=dict(size=10, color=SLATE)
+                    )
+                    _fig_combo.update_yaxes(
+                        tickformat=".0%", secondary_y=True,
+                        title_text="Δ% vs Prior", title_font=dict(size=10, color=SLATE),
+                        zeroline=True, zerolinecolor=BORDER, zerolinewidth=1,
+                    )
+                    _fig_combo.update_layout(
+                        height=380,
+                        plot_bgcolor="white",
+                        paper_bgcolor="white",
+                        margin=dict(l=0, r=0, t=10, b=0),
+                        barmode="group",
+                        font=dict(family="Arial", color=NAVY, size=10),
+                        legend=dict(orientation="h", y=-0.22, font=dict(size=9)),
+                        xaxis=dict(tickangle=-45, gridcolor=BORDER),
+                    )
+                    st.plotly_chart(_fig_combo, use_container_width=True)
+                else:
+                    st.info(f"Column for {_t1_sel} not available in period data.")
+            elif _t1_src in ("fs", "flags"):
+                st.info("This metric is a point-in-time value — period trend chart not available.")
+
         else:
             st.info("No data available for the selected metric and filter.")
 
