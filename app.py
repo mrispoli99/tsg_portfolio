@@ -782,12 +782,38 @@ def page_portfolio_overview():
     st.markdown('<div class="section-header">Portfolio Flag Summary</div>', unsafe_allow_html=True)
     flag_row_cols = st.columns([1, 1, 1, 1, 1])
 
-    # Compute period-over-period changes using the selected period granularity
-    if not q_latest_snap.empty and not q_prior_snap.empty:
-        pop_ebitda = (_sum_col(q_latest_snap, "adj_ebitda") or 0) - (_sum_col(q_prior_snap, "adj_ebitda") or 0)
-        pop_rev    = (_sum_col(q_latest_snap, "revenue") or 0)    - (_sum_col(q_prior_snap, "revenue") or 0)
+    # LTM EBITDA Δ — computed from yoy_growth (correct LTM-to-LTM comparison),
+    # not from q_latest_snap which would compare single period slices.
+    # Sum latest LTM adj_ebitda across filtered companies, then compare to
+    # the same companies' LTM adj_ebitda one year prior via ebitda_yoy.
+    yoy_data = load_yoy_growth()
+    yoy_data["cash_flow_date"] = pd.to_datetime(yoy_data["cash_flow_date"], errors="coerce")
+
+    if not yoy_data.empty and filtered_names:
+        yoy_filt = yoy_data[yoy_data["company_name"].isin(filtered_names)]
+        yoy_latest_co = (yoy_filt.sort_values("cash_flow_date")
+                                 .groupby("company_name").last().reset_index())
+        # Current LTM EBITDA: from ltm_filtered (pre-computed, correct)
+        curr_ltm_ebitda = ltm_filtered["ltm_adj_ebitda"].sum() if not ltm_filtered.empty else None
+        # Prior LTM EBITDA: back-calculate using ebitda_yoy
+        # prior = current / (1 + yoy) per company, then sum
+        if curr_ltm_ebitda is not None and not yoy_latest_co.empty:
+            prior_vals = []
+            for _, yr in yoy_latest_co.iterrows():
+                co = yr["company_name"]
+                ltm_row = ltm_filtered[ltm_filtered["company_name"] == co]
+                if ltm_row.empty: continue
+                curr_eb = ltm_row["ltm_adj_ebitda"].iloc[0]
+                yoy_val = yr.get("ebitda_yoy")
+                if pd.notna(curr_eb) and pd.notna(yoy_val) and yoy_val != -1:
+                    prior_vals.append(curr_eb / (1 + yoy_val))
+            prior_ltm_ebitda = sum(prior_vals) if prior_vals else None
+            pop_ebitda = (curr_ltm_ebitda - prior_ltm_ebitda) if (
+                prior_ltm_ebitda is not None and curr_ltm_ebitda is not None) else None
+        else:
+            pop_ebitda = None
     else:
-        pop_ebitda = pop_rev = None
+        pop_ebitda = None
 
     def _flag_box(col, value_str, label, flag, note=""):
         clr = {
@@ -810,7 +836,7 @@ def page_portfolio_overview():
     ebitda_str  = (f"{'▲' if pop_ebitda and pop_ebitda > 0 else '▼'} {format_millions(abs(pop_ebitda))}"
                    if pop_ebitda is not None else "—")
     _flag_box(flag_row_cols[0], ebitda_str, "LTM EBITDA Δ", ebitda_flag,
-              f"vs prior {_period_label_str}")
+              "vs prior year LTM")
 
     # Avg Revenue Growth (YoY from flags — point-in-time, won't change with period)
     if not flags_filtered.empty and "revenue_yoy" in flags_filtered.columns:
