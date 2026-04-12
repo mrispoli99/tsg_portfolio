@@ -42,11 +42,140 @@ IS_TAG_ORDER = [
     "Valuation",
 ]
 
+# ---------------------------------------------------------------------------
+# Dynamic Wide-to-Long Table Mapping
+# ---------------------------------------------------------------------------
+
+METRIC_TAG_MAP = {
+    # Income Statement
+    "revenue": "Income Statement",
+    "net_sales": "Income Statement",
+    "revenue_alt": "Income Statement",
+    "gross_profit": "Income Statement",
+    "cogs": "Income Statement",
+    "ebitda": "Income Statement",
+    "adj_ebitda": "Income Statement",
+    "ebitda_global": "Income Statement",
+    "adj_ebitda_global": "Income Statement",
+    "net_income": "Income Statement",
+    "interest_expense": "Income Statement",
+    "da": "Income Statement",
+    "income_tax": "Income Statement",
+    "total_opex": "Income Statement",
+    "other_revenue": "Income Statement",
+
+    # Margins & Ratios
+    "gross_margin_pct": "Ratio Analysis",
+    "ebitda_margin_pct": "Ratio Analysis",
+    "adj_ebitda_margin_pct": "Ratio Analysis",
+    "revenue_growth_pct": "Ratio Analysis",
+    "gross_margin_global": "Ratio Analysis",
+    "ebitda_growth_pct": "Ratio Analysis",
+    "adj_ebitda_growth_pct": "Ratio Analysis",
+
+    # Balance Sheet & Covenants
+    "net_leverage": "Covenant",
+    "interest_coverage": "Covenant",
+    "total_gross_debt": "Covenant",
+    "net_debt": "Covenant",
+    "senior_secured_debt": "Covenant",
+    "floating_rate_debt": "Covenant",
+
+    # Balance Sheet
+    "cash": "Balance Sheet",
+    "cash_global": "Balance Sheet",
+    "total_assets": "Balance Sheet",
+    "current_assets": "Balance Sheet",
+    "current_liabilities": "Balance Sheet",
+    "long_term_debt": "Balance Sheet",
+    "net_working_capital": "Balance Sheet",
+    "accounts_payable": "Balance Sheet",
+    "inventory": "Balance Sheet",
+    "goodwill": "Balance Sheet",
+    "shareholders_equity": "Balance Sheet",
+
+    # Cash Flow
+    "cfo": "Cash Flow",
+    "cfi": "Cash Flow",
+    "cff": "Cash Flow",
+    "capex": "Cash Flow",
+    
+    # Valuation / LTM versions
+    "ltm_revenue": "Income Statement",
+    "ltm_adj_ebitda": "Income Statement",
+    "ltm_free_cash_flow": "Cash Flow",
+    "ltm_capex": "Cash Flow",
+    "ltm_cash_interest": "Cash Flow",
+    "tev": "Valuation",
+    "gross_moi": "Valuation",
+    "gross_irr": "Valuation",
+}
+
+DISPLAY_NAMES = {
+    "revenue": "Revenue",
+    "net_sales": "Net Sales",
+    "gross_profit": "Gross Profit",
+    "cogs": "Cost of Goods Sold",
+    "ebitda": "EBITDA",
+    "adj_ebitda": "Adj. EBITDA",
+    "net_income": "Net Income",
+    "gross_margin_pct": "Gross Margin %",
+    "ebitda_margin_pct": "EBITDA Margin %",
+    "adj_ebitda_margin_pct": "Adj. EBITDA Margin %",
+    "net_leverage": "Net Leverage",
+    "interest_coverage": "Interest Coverage",
+    "cash": "Cash",
+    "net_debt": "Net Debt",
+    "total_gross_debt": "Total Gross Debt",
+    "cfo": "Cash from Operations",
+    "cfi": "Cash from Investing",
+    "cff": "Cash from Financing",
+    "capex": "Capital Expenditure",
+    "ltm_revenue": "LTM Revenue",
+    "ltm_adj_ebitda": "LTM Adj. EBITDA",
+    "ltm_free_cash_flow": "LTM Free Cash Flow",
+    "ltm_capex": "LTM Capex",
+    "interest_expense": "Interest Expense",
+    "tev": "Total Enterprise Value",
+}
+
+def prep_table_data_from_wide(df_wide):
+    """
+    Takes a wide dataframe and pivots it to match the legacy 'long' drill-down format.
+    Automatically assigns the necessary 'tag' mappings.
+    """
+    if df_wide is None or df_wide.empty:
+        return pd.DataFrame()
+
+    id_vars = [col for col in df_wide.columns if col in [
+        "company_id", "company_name", "cash_flow_date", 
+        "fiscal_year", "fiscal_quarter", "period_label", "period", "version"
+    ]]
+
+    # Unpivot the metrics into rows
+    df_long = pd.melt(
+        df_wide, 
+        id_vars=id_vars, 
+        var_name="attribute_name_raw", 
+        value_name="true_up_value"
+    )
+
+    df_long = df_long.dropna(subset=["true_up_value"])
+    
+    # Map attributes back to UI groupings
+    df_long["tag"] = df_long["attribute_name_raw"].map(METRIC_TAG_MAP).fillna("Other")
+    df_long["attribute_name"] = df_long["attribute_name_raw"].replace(DISPLAY_NAMES)
+    df_long["true_up_value"] = pd.to_numeric(df_long["true_up_value"], errors="coerce")
+
+    return df_long
+
+# ---------------------------------------------------------------------------
+# UI Helpers
+# ---------------------------------------------------------------------------
 
 def flag_badge(flag: str) -> str:
     css = {"Red": "flag-red", "Yellow": "flag-yellow", "Green": "flag-green"}.get(flag, "")
     return f'<span class="metric-pill {css}">{flag_emoji(flag)} {flag}</span>'
-
 
 def kpi_card(value, label, delta="", delta_color=SLATE):
     return f"""
@@ -56,7 +185,6 @@ def kpi_card(value, label, delta="", delta_color=SLATE):
         {"" if not delta else f'<div class="kpi-delta" style="color:{delta_color};">{delta}</div>'}
     </div>
     """
-
 
 # ---------------------------------------------------------------------------
 # Consumer KPIs Page
@@ -134,8 +262,6 @@ def page_consumer_kpis():
     for company in selected_companies[:6]:  # Limit to 6 for readability
         try:
             q = load_quarterly(company)
-            # Try to find this KPI in the quarterly data
-            # KPIs are stored as separate attributes; check if column exists
             kpi_col_map = {
                 "Revenue (Global)":          "revenue",
                 "EBITDA (Global)":           "ebitda_global",
@@ -176,7 +302,7 @@ def page_consumer_kpis():
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    # Full KPI heatmap — all KPIs x all companies (latest values)
+    # Full KPI heatmap
     st.markdown('<div class="section-header">Full KPI Scorecard — All Companies</div>',
                 unsafe_allow_html=True)
 
@@ -185,7 +311,6 @@ def page_consumer_kpis():
     )
 
     if not pivot.empty:
-        # Format values
         display_pivot = pivot.copy()
         for col in display_pivot.columns:
             display_pivot[col] = display_pivot[col].apply(
@@ -197,7 +322,7 @@ def page_consumer_kpis():
 
 
 # ---------------------------------------------------------------------------
-# Company News Section (used inside Company Detail)
+# Company News Section
 # ---------------------------------------------------------------------------
 
 def render_news_section(company_name: str):
@@ -212,8 +337,6 @@ def render_news_section(company_name: str):
 
     if news_df is None or (hasattr(news_df, "empty") and news_df.empty):
         st.info(f"No recent news found for {company_name}.")
-        st.caption("To enable news: run news_pipeline.py on your VM, "
-                   "then re-export CSVs with export_to_csv.py.")
         return
 
     for _, row in news_df.iterrows():
@@ -246,7 +369,6 @@ def render_news_section(company_name: str):
 # Income Statement Drill-Down (Company Detail)
 # ---------------------------------------------------------------------------
 
-# Flag threshold explanations for Income Statement hover tooltips
 IS_FLAG_RULES = {
     "Revenue":      ("🟢 >10% YoY growth", "🟡 0–10% growth", "🔴 Negative growth"),
     "EBITDA":       ("🟢 >10% YoY growth", "🟡 0–10% growth", "🔴 Declining"),
@@ -254,10 +376,8 @@ IS_FLAG_RULES = {
     "default":      ("🟢 Improved >10%",   "🟡 Changed 0–10%", "🔴 Declined >10%"),
 }
 
-
 def _is_flag(delta_pct, attr_name: str) -> tuple:
-    """Return (emoji, explanation) for an IS line item delta."""
-    if delta_pct is None:
+    if delta_pct is None or pd.isna(delta_pct):
         return "⚪", "Insufficient data for comparison"
     rules = IS_FLAG_RULES.get(attr_name, IS_FLAG_RULES["default"])
     if delta_pct > 0.10:
@@ -269,47 +389,81 @@ def _is_flag(delta_pct, attr_name: str) -> tuple:
     else:
         return "🔴", rules[2]
 
-
 def render_income_statement(company_name: str, compare_mode: str = "Prior Year"):
     label_map = {"Prior Year": "Prior Year", "Prior Quarter": "Prior Quarter"}
     cmp_label = label_map.get(compare_mode, "Prior Year")
-    st.markdown(f'<div class="section-header">Income Statement — LTM vs {cmp_label}</div>',
+    st.markdown(f'<div class="section-header">Financial Drill-Down — Latest vs {cmp_label}</div>',
                 unsafe_allow_html=True)
 
-    df = load_income_statement_ltm(company_name)
-
-    if df.empty:
-        st.info("No income statement data available for this company.")
+    try:
+        # Load directly from the deduplicated wide view
+        qdf = load_quarterly(company_name)
+    except Exception as e:
+        st.info(f"Could not load quarterly data: {e}")
         return
 
-    # For Prior Quarter mode — shift comparison columns if available
-    if compare_mode == "Prior Quarter" and "py_value" in df.columns:
-        # Use quarterly data for QoQ comparison if possible
-        try:
-            qdf = load_quarterly(company_name)
-            if not qdf.empty:
-                qdf = qdf.sort_values("cash_flow_date")
-                # Map attribute names to quarterly columns
-                col_map = {
-                    "Revenue": "revenue", "Net Sales": "revenue",
-                    "Adj. EBITDA": "adj_ebitda", "Gross Profit": "gross_profit",
-                    "Net Leverage": "net_leverage",
-                }
-                latest  = qdf.iloc[-1]
-                prior_q = qdf.iloc[-2] if len(qdf) >= 2 else None
-                for attr, qcol in col_map.items():
-                    if prior_q is not None and qcol in qdf.columns:
-                        mask = df["attribute_name"].str.contains(attr, case=False, na=False)
-                        if mask.any():
-                            pq_val = prior_q[qcol]
-                            df.loc[mask, "py_value"] = pq_val
-                            df.loc[mask, "delta"]    = df.loc[mask, "ltm_value"] - pq_val
-                            df.loc[mask, "delta_pct"] = (
-                                df.loc[mask, "delta"] / pq_val if pq_val else None)
-        except Exception:
-            pass  # Fall back to prior year data
+    if qdf.empty:
+        st.info("No quarterly data available for this company.")
+        return
 
-    st.caption(f"Flags compare LTM vs {cmp_label}. 🟢 Improved >10% · 🟡 Changed 0–10% · 🔴 Declined >10%")
+    # Ensure dates are sorted chronologically
+    if "cash_flow_date" in qdf.columns:
+        qdf["cash_flow_date"] = pd.to_datetime(qdf["cash_flow_date"], errors="coerce")
+        qdf = qdf.dropna(subset=["cash_flow_date"]).sort_values("cash_flow_date")
+
+    # Melt the WIDE data into LONG format for the table
+    df_long = prep_table_data_from_wide(qdf)
+
+    if df_long.empty:
+        st.info("No formatted table data available.")
+        return
+
+    dates = sorted(df_long["cash_flow_date"].unique())
+    if not dates:
+        return
+
+    latest_date = dates[-1]
+    latest_dt = pd.to_datetime(latest_date)
+
+    # Determine dynamic comparison date based on user toggle
+    if compare_mode == "Prior Quarter":
+        prior_dates = [d for d in dates if d < latest_date]
+        comp_date = prior_dates[-1] if prior_dates else None
+    else:
+        comp_date = None
+        for d in reversed(dates):
+            if pd.to_datetime(d) <= latest_dt - pd.DateOffset(months=11):
+                comp_date = d
+                break
+
+    # Extract current and comparison periods
+    df_latest = df_long[df_long["cash_flow_date"] == latest_date].copy()
+    df_comp = df_long[df_long["cash_flow_date"] == comp_date].copy() if comp_date else pd.DataFrame()
+
+    merged = df_latest[["tag", "attribute_name", "true_up_value"]].rename(columns={"true_up_value": "ltm_value"})
+
+    if not df_comp.empty:
+        comp_vals = df_comp[["attribute_name", "true_up_value"]].rename(columns={"true_up_value": "py_value"})
+        merged = merged.merge(comp_vals, on="attribute_name", how="left")
+    else:
+        merged["py_value"] = None
+
+    # Calculate Deltas dynamically 
+    merged["delta"] = merged.apply(
+        lambda r: r["ltm_value"] - r["py_value"] 
+        if pd.notna(r.get("ltm_value")) and pd.notna(r.get("py_value")) else None, 
+        axis=1
+    )
+    merged["delta_pct"] = merged.apply(
+        lambda r: r["delta"] / r["py_value"] 
+        if pd.notna(r.get("delta")) and r.get("py_value") else None, 
+        axis=1
+    )
+
+    df = merged
+    
+    comp_str = pd.to_datetime(comp_date).strftime('%b %Y') if comp_date else 'N/A'
+    st.caption(f"Flags compare Latest ({latest_dt.strftime('%b %Y')}) vs {cmp_label} ({comp_str}). 🟢 Improved >10% · 🟡 Changed 0–10% · 🔴 Declined >10%")
 
     for tag in IS_TAG_ORDER:
         tag_df = df[df["tag"] == tag].copy()
@@ -318,7 +472,6 @@ def render_income_statement(company_name: str, compare_mode: str = "Prior Year")
 
         with st.expander(f"**{tag}**", expanded=(tag == "Income Statement")):
             rows = []
-            tooltips = []
             for _, row in tag_df.iterrows():
                 ltm       = row["ltm_value"]
                 py        = row["py_value"]
@@ -327,14 +480,13 @@ def render_income_statement(company_name: str, compare_mode: str = "Prior Year")
                 attr      = str(row["attribute_name"])
 
                 flag_emoji_str, flag_explanation = _is_flag(delta_pct, attr)
-                tooltips.append(flag_explanation)
 
                 rows.append({
                     "Line Item": attr,
-                    "LTM ($M)":  f"{ltm:,.1f}" if ltm is not None else "—",
-                    "PY ($M)":   f"{py:,.1f}"  if py  is not None else "—",
-                    "Δ $M":      f"{delta:+,.1f}" if delta is not None else "—",
-                    "Δ %":       f"{delta_pct*100:+.1f}%" if delta_pct is not None else "—",
+                    "Current":  f"{ltm:,.1f}" if pd.notna(ltm) else "—",
+                    "Prior":    f"{py:,.1f}"  if pd.notna(py) else "—",
+                    "Δ Value":  f"{delta:+,.1f}" if pd.notna(delta) else "—",
+                    "Δ %":       f"{delta_pct*100:+.1f}%" if pd.notna(delta_pct) else "—",
                     "Flag":      flag_emoji_str,
                     "Flag Meaning": flag_explanation,
                 })
@@ -352,7 +504,6 @@ def render_income_statement(company_name: str, compare_mode: str = "Prior Year")
             st.dataframe(styled, use_container_width=True,
                          height=min(450, len(rows) * 38 + 40))
 
-
 # ---------------------------------------------------------------------------
 # Enhanced Company Detail Page
 # ---------------------------------------------------------------------------
@@ -366,9 +517,6 @@ def page_company_detail_enhanced():
         st.info("No company data available.")
         return
 
-    # Pre-select from session state (set by "View Detail" button on Portfolio Overview)
-    # Important: read once and don't overwrite on every render — only update when
-    # the selectbox itself changes, not on every rerun
     default_company = st.session_state.get("selected_company", companies[0])
     if default_company not in companies:
         default_company = companies[0]
@@ -381,7 +529,6 @@ def page_company_detail_enhanced():
         key="company_detail_select"
     )
 
-    # Only update session state when user explicitly changes the selectbox
     if selected != st.session_state.get("selected_company"):
         st.session_state["selected_company"] = selected
 
@@ -395,7 +542,6 @@ def page_company_detail_enhanced():
     company_info = master[master["company_name"] == selected]
     info_row     = company_info.iloc[0] if len(company_info) > 0 else None
 
-    # Company header card
     if flag_row is not None:
         overall = flag_row.get("overall_flag", "")
         sector  = info_row.get("client_sector", "") if info_row is not None else ""
@@ -430,7 +576,6 @@ def page_company_detail_enhanced():
         </div>
         """, unsafe_allow_html=True)
 
-        # KPI strip — plain tiles for absolute metrics, colored flag cards for flagged metrics
         abs_cols = st.columns(4)
         abs_kpis = [
             (format_millions(flag_row.get("ltm_revenue")),     "LTM Revenue"),
@@ -441,7 +586,6 @@ def page_company_detail_enhanced():
         for col, (val, label) in zip(abs_cols, abs_kpis):
             col.markdown(kpi_card(val, label), unsafe_allow_html=True)
 
-        # Colored flag cards for the 4 flagged metrics
         FLAG_CARD_DEFS = [
             ("revenue_growth_flag",    "revenue_yoy",           "Rev Growth YoY",  format_pct,
              "Green >10% · Yellow 0–10% · Red <0%",   "(LTM Rev − PY Rev) / PY Rev"),
@@ -472,7 +616,6 @@ def page_company_detail_enhanced():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Sub-tabs within company detail
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Company Overview",
         "Company-Specific Analysis",
@@ -484,15 +627,14 @@ def page_company_detail_enhanced():
 
     with tab1:
         quarterly = load_quarterly(selected)
-        # Limit to most recent 3 years
         if not quarterly.empty and "cash_flow_date" in quarterly.columns:
             import pandas as _pd
             quarterly = quarterly.copy()
             quarterly["cash_flow_date"] = _pd.to_datetime(quarterly["cash_flow_date"], errors="coerce")
             _cutoff = _pd.Timestamp.now() - _pd.DateOffset(years=3)
             quarterly = quarterly[quarterly["cash_flow_date"] >= _cutoff]
+            
         if not quarterly.empty:
-            # Revenue & EBITDA trend
             st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
                         unsafe_allow_html=True)
             from plotly.subplots import make_subplots
@@ -518,7 +660,6 @@ def page_company_detail_enhanced():
             fig.update_xaxes(tickangle=-45)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Leverage and Margin side by side
             col_lev, col_mgn = st.columns(2)
             with col_lev:
                 st.markdown('<div class="section-header">Net Leverage</div>',
@@ -567,16 +708,11 @@ def page_company_detail_enhanced():
                     fig4.update_xaxes(tickangle=-45)
                     st.plotly_chart(fig4, use_container_width=True)
 
-        # ----------------------------------------------------------------
-        # KPI SUMMARY TABLE — KPIs as rows, periods as columns
-        # with Δ% change column per period, for this company only
-        # ----------------------------------------------------------------
         st.markdown("<hr style='border:1px solid #E0E4EA;margin:28px 0 16px 0;'>",
                     unsafe_allow_html=True)
         st.markdown('<div class="section-header">KPI Summary — Period View</div>',
                     unsafe_allow_html=True)
 
-        # Reload full quarterly (not 3yr-filtered) for period label building
         q_all_co = load_quarterly(selected)
         if not q_all_co.empty and "cash_flow_date" in q_all_co.columns:
             import pandas as _pd2
@@ -585,7 +721,6 @@ def page_company_detail_enhanced():
             _co_cutoff = _pd2.Timestamp.now() - _pd2.DateOffset(years=3)
             q_all_co = q_all_co[q_all_co["cash_flow_date"] >= _co_cutoff]
 
-        # Period mode selector — sits above this section only
         _pm_col, _ = st.columns([2, 5])
         with _pm_col:
             co_period_mode = st.radio(
@@ -597,7 +732,6 @@ def page_company_detail_enhanced():
             )
 
         if not q_all_co.empty:
-            # Build period label per mode
             if co_period_mode == "Monthly":
                 if "period" in q_all_co.columns:
                     q_all_co = q_all_co[q_all_co["period"] == "Monthly"]
@@ -613,13 +747,9 @@ def page_company_detail_enhanced():
                                        if "period_label" in q_all_co.columns
                                        else q_all_co["cash_flow_date"].dt.to_period("Q").astype(str))
 
-            # Sorted unique period labels
             all_co_periods = (q_all_co.sort_values("cash_flow_date")["_plabel"]
                               .drop_duplicates().tolist())
 
-            # KPI definitions for this table
-            # (display_label, column, format_fn, is_pct, threshold_fn)
-            # threshold_fn: given value, returns "Red"|"Yellow"|"Green"|None
             CO_KPI_DEFS = [
                 ("LTM Revenue ($M)",       "revenue",               format_millions, False,
                     None),
@@ -647,16 +777,11 @@ def page_company_detail_enhanced():
                     None),
             ]
 
-            # Active KPI state (drives the chart below)
             _kpi_key = f"co_active_kpi_{selected}"
             if _kpi_key not in st.session_state:
                 st.session_state[_kpi_key] = CO_KPI_DEFS[0][0]
             active_co_kpi = st.session_state[_kpi_key]
 
-            # Build pivot: rows = KPIs, cols = periods + Δ%
-            # The CSV already contains pre-calculated LTM figures.
-            # For each period, take the most recent row (latest cash_flow_date)
-            # — this handles multiple rows in the same period correctly.
             pivot_rows = []
             raw_vals   = {}
 
@@ -673,7 +798,6 @@ def page_company_detail_enhanced():
                         val = None
                     else:
                         sub = sub.sort_values("cash_flow_date")
-                        # Prefer ltm_ prefixed column (pre-calculated LTM from SQL)
                         val = None
                         for try_col in [f"ltm_{col}", col]:
                             if try_col in sub.columns:
@@ -685,7 +809,6 @@ def page_company_detail_enhanced():
                     raw_vals[lbl][p] = val
                     row[p] = fmt(val) if val is not None else "—"
 
-                    # Δ% vs prior period
                     if prev_val is not None and val is not None and prev_val != 0:
                         chg = (val - prev_val) / abs(prev_val)
                         row[f"Δ {p}"] = f"{chg*100:+.1f}%"
@@ -700,7 +823,6 @@ def page_company_detail_enhanced():
                 delta_cols = [c for c in pivot_df.columns if c.startswith("Δ ")]
 
                 def _co_style(row):
-                    """Colour Δ columns and highlight the active KPI row."""
                     styles = []
                     for col_name in row.index:
                         is_active = (row.name == active_co_kpi)
@@ -724,9 +846,6 @@ def page_company_detail_enhanced():
                 st.caption(f"KPIs for **{selected}** · {co_period_mode} periods · "
                            f"Δ% = change vs prior period · click a row to select metric")
 
-                # ----------------------------------------------------------------
-                # METRIC SELECTOR — buttons to pick which KPI drives the chart
-                # ----------------------------------------------------------------
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown('<div class="section-header">Select Metric for Chart Below</div>',
                             unsafe_allow_html=True)
@@ -744,16 +863,12 @@ def page_company_detail_enhanced():
                         st.session_state[_kpi_key] = kpi_lbl
                         st.rerun()
 
-                # ----------------------------------------------------------------
-                # PERIOD-OVER-PERIOD CHART — for the selected KPI, this company only
-                # ----------------------------------------------------------------
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
                     f'<div class="section-header">{active_co_kpi} — Period-over-Period</div>',
                     unsafe_allow_html=True
                 )
 
-                # Find the column and format for the active KPI
                 active_def = next(
                     (d for d in CO_KPI_DEFS if d[0] == active_co_kpi), None
                 )
@@ -765,7 +880,6 @@ def page_company_detail_enhanced():
                           .copy())
 
                     if len(ts) >= 2:
-                        # Bar = absolute value, line overlay = Δ% change
                         ts["_prev"] = ts[a_col].shift(1)
                         ts["_chg_pct"] = ((ts[a_col] - ts["_prev"]) /
                                           ts["_prev"].abs()).where(
@@ -785,7 +899,6 @@ def page_company_detail_enhanced():
                         from plotly.subplots import make_subplots as _msp2
                         fig_co_kpi = _msp2(specs=[[{"secondary_y": True}]])
 
-                        # Primary axis — absolute values as bars
                         fig_co_kpi.add_trace(
                             go.Bar(
                                 x=ts["_plabel"], y=ts[a_col],
@@ -796,7 +909,6 @@ def page_company_detail_enhanced():
                             secondary_y=False
                         )
 
-                        # Secondary axis — Δ% as line
                         fig_co_kpi.add_trace(
                             go.Scatter(
                                 x=ts["_plabel"], y=ts["_chg_pct"],
@@ -844,17 +956,9 @@ def page_company_detail_enhanced():
             st.info("No quarterly data available for this company.")
 
     with tab2:
-        st.markdown(f"""
-        <div style="background:#F8F9FA; border:2px dashed #CCCCCC; border-radius:10px;
-                    padding:60px 40px; text-align:center; margin-top:20px;">
-            <div style="font-size:28px; margin-bottom:12px;">🔬</div>
-            <div style="font-size:18px; font-weight:700; color:#999999; font-family:Arial;
-                        margin-bottom:8px;">Company-Specific Analysis — Coming Soon</div>
-            <div style="font-size:13px; color:#BBBBBB; font-family:Arial;">
-                Deep-dive company analytics and custom analysis views will be available here.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Replaced the placeholder with the dynamic Income Statement Drill-Down 
+        # that utilizes our new pandas melting operation
+        render_income_statement(selected, "Prior Year")
 
     with tab3:
         st.markdown(f"""
@@ -873,7 +977,6 @@ def page_company_detail_enhanced():
         st.markdown('<div class="section-header">Credit & Performance Flag Scorecard</div>',
                     unsafe_allow_html=True)
 
-        # Threshold explanations — shown as hover context
         ALERT_THRESHOLDS = {
             "Net Debt / EBITDA":      ("< 2.0x",  "2.0–4.0x",  "4.0–6.0x",  "> 6.0x",  "Net Debt ÷ LTM Credit Agreement EBITDA"),
             "Gross Debt / EBITDA":    ("< 3.0x",  "3.0–5.0x",  "5.0–7.0x",  "> 7.0x",  "Total Gross Debt ÷ LTM Credit Agreement EBITDA"),
@@ -921,7 +1024,6 @@ def page_company_detail_enhanced():
         st.markdown('<div class="section-header">Macro & News</div>',
                     unsafe_allow_html=True)
 
-        # CapIQ market comps placeholder
         st.markdown(f"""
         <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
                     padding:20px 24px; margin-bottom:16px;">
@@ -934,7 +1036,6 @@ def page_company_detail_enhanced():
         </div>
         """, unsafe_allow_html=True)
 
-        # Macro context
         macro_sector = info_row.get("client_sector", "") if info_row is not None else ""
         if macro_sector:
             st.markdown(f"""
@@ -1000,4 +1101,3 @@ def page_company_detail_enhanced():
                 for label, val in gov_fields:
                     if val and str(val) not in ("None", "nan", ""):
                         st.markdown(f"**{label}:** {val}")
-
