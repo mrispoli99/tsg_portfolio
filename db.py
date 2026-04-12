@@ -64,181 +64,64 @@ def load_flags() -> pd.DataFrame:
 def load_ltm_snapshot() -> pd.DataFrame:
     return _csv("ltm_snapshot.csv")
 
-@st.cache_data
-def load_quarterly_all() -> pd.DataFrame:
-    df = _csv("financials_quarterly.csv")
+def _prep_financials(df: pd.DataFrame, period_value: str) -> pd.DataFrame:
+    """
+    Normalise a wide-format financials CSV so the app always sees the same
+    standard columns regardless of which view file was loaded.
+
+    period_value : the fallback string for the 'period' column
+                   ('Quarterly' | 'Annual' | 'Monthly')
+    """
     if df.empty:
         return df
 
-    # ------------------------------------------------------------------
-    # Detect long vs wide format
-    # ------------------------------------------------------------------
-    long_indicators = {"attribute_name", "metric_name", "attribute", "metric"}
-    is_long = bool(long_indicators & set(c.lower() for c in df.columns))
+    df = df.copy()
+    df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
 
-    if not is_long:
-        return df   # Already wide — return as-is
+    # ── Normalise the period column ──────────────────────────────────────
+    # Monthly view uses 'period_granularity' instead of 'period'
+    if "period" not in df.columns:
+        if "period_granularity" in df.columns:
+            df = df.rename(columns={"period_granularity": "period"})
+        else:
+            df["period"] = period_value
 
-    # ------------------------------------------------------------------
-    # LONG FORMAT (ts_entity_financials style):
-    # Columns: company_name, period, tag, attribute_name,
-    #          cash_flow_date, as_of_date, true_up_value, ...
-    #
-    # Strategy:
-    #  1. Keep most recent as_of_date per (company, period_type,
-    #     cash_flow_date, attribute_name)
-    #  2. Pivot attribute_name → columns
-    #  3. Return one row per (company_name, period, cash_flow_date)
-    #     so the app can filter by period type exactly
-    # ------------------------------------------------------------------
+    # ── Ensure period_label exists ───────────────────────────────────────
+    if "period_label" not in df.columns:
+        d = df["cash_flow_date"]
+        if period_value == "Quarterly":
+            df["period_label"] = "Q" + d.dt.quarter.astype(str) + " " + d.dt.year.astype(str)
+        elif period_value == "Monthly":
+            df["period_label"] = d.dt.strftime("%b %Y")
+        else:  # Annual
+            df["period_label"] = d.dt.year.astype(str)
 
-    # Normalise column names
-    col_map = {c: c.lower().replace(" ", "_") for c in df.columns}
-    df = df.rename(columns=col_map)
+    return df.sort_values(["company_name", "cash_flow_date"])
 
-    # Identify key columns
-    company_col  = next((c for c in df.columns if c in
-                         ("company_name", "company", "entity_name")), None)
-    attr_col     = next((c for c in df.columns if c in
-                         ("attribute_name", "metric_name", "attribute")), None)
-    val_col      = next((c for c in df.columns if c in
-                         ("true_up_value", "value", "amount", "val")), None)
-    date_col     = next((c for c in df.columns if c in
-                         ("cash_flow_date", "period_date", "date")), None)
-    as_of_col    = next((c for c in df.columns if c in
-                         ("as_of_date", "as_of", "snapshot_date")), None)
-    period_col   = next((c for c in df.columns if c in
-                         ("period", "frequency", "period_type", "freq")), None)
 
-    if not all([company_col, attr_col, val_col, date_col]):
-        st.warning(f"Cannot parse financials CSV. Columns: {list(df.columns)}")
-        return df
+@st.cache_data
+def load_quarterly_all() -> pd.DataFrame:
+    """Load all three period granularities and return them stacked."""
+    frames = []
 
-    # Filter to Actual version only — exclude At-Entry and Budget
-    if "version" in df.columns:
-        df = df[df["version"] == "Actual"]
-    if as_of_col:
-        df[as_of_col] = pd.to_datetime(df[as_of_col], errors="coerce")
-    df[val_col] = pd.to_numeric(df[val_col], errors="coerce")
+    q = _csv("financials_quarterly.csv")
+    if not q.empty:
+        frames.append(_prep_financials(q, "Quarterly"))
 
-    # ------------------------------------------------------------------
-    # Map attribute names → short column names
-    # ------------------------------------------------------------------
-    ATTR_MAP = {
-        # ---- LTM Revenue (use Valuation LTM Revenue — correct pre-calc LTM) ----
-        "valuation ltm revenue":                        "revenue",
+    m = _csv("financials_monthly.csv")
+    if not m.empty:
+        frames.append(_prep_financials(m, "Monthly"))
 
-        # ---- LTM EBITDA ----
-        "ltm adj. ebitda (global)":                     "adj_ebitda",
-        "valuation ltm ebitda":                         "adj_ebitda",
+    a = _csv("financials_annual.csv")
+    if not a.empty:
+        frames.append(_prep_financials(a, "Annual"))
 
-        # ---- Gross Profit / Margins ----
-        "gross profit":                                 "gross_profit",
-        "gross margin (global)":                        "gross_margin_pct",
-        "adj. ebitda margin %":                         "adj_ebitda_margin_pct",
-        "ebitda margin %":                              "adj_ebitda_margin_pct",
+    if not frames:
+        return pd.DataFrame()
 
-        # ---- Leverage / Coverage ratios ----
-        "total net leverage (global)":                  "net_leverage",
-        "net debt / ebitda (global)":                   "net_leverage",
-        "total debt / ebitda (global)":                 "net_leverage",
-        "total gross leverage (global)":                "gross_leverage",
-        "senior secured gross leverage (global)":       "senior_secured_leverage",
-        "interest coverage ratio (global)":             "interest_coverage",
-        "ebitda / interest expense":                    "interest_coverage",
-        "debt service coverage ratio (global)":         "debt_service_coverage",
-        "ebitda / (interest+principal)":                "debt_service_coverage",
-
-        # ---- Net Debt / Debt components ----
-        "net debt (global)":                            "net_debt",
-        "valuation net debt":                           "net_debt",
-        "total gross debt (global)":                    "total_gross_debt",
-        "floating rate debt (global)":                  "floating_rate_debt",
-        "fixed rate debt (global)":                     "fixed_rate_debt",
-        "pik debt (global)":                            "pik_debt",
-        "other debt (global)":                          "other_debt",
-        "senior secured portion (gross) (global)":      "senior_secured_debt",
-        "unrestricted cash (global)":                   "cash",
-        "cash (global)":                                "cash",
-
-        # ---- LTM Cash Flow items ----
-        "ltm credit agreement adj. ebitda (global)":    "credit_agreement_ebitda",
-        "ltm free cash flow (global)":                  "free_cash_flow",
-        "ltm capex (excl. m&a purchase capex) (global)":"capex",
-        "ltm cash interest expense (gross) (global)":   "cash_interest_expense",
-        "ltm cash taxes (including distributions) (global)": "cash_taxes",
-        "ltm increase / decrease in nwc (global)":      "change_in_nwc",
-        "ltm mandatory principal payments (global)":    "mandatory_principal",
-
-        # ---- Valuation / TEV ----
-        "total enterprise value (tev)":                 "current_tev",
-        "tev / net sales (global)":                     "tev_to_revenue",
-        "tev / ebitda (global)":                        "tev_to_ebitda",
-
-        # ---- Returns / Growth ----
-        "gross moi":                                    "gross_moi",
-        "gross irr":                                    "gross_irr",
-        "revenue growth %":                             "revenue_yoy",
-        "adj. ebitda growth %":                         "ebitda_growth",
-        "total cost basis":                             "total_cost",
-        "unrealized value":                             "unrealized_value",
-        "realized proceeds":                            "realized_proceeds",
-        "total realized & unrealized value":            "total_value",
-    }
-
-    df["_attr_norm"] = df[attr_col].str.strip().str.lower()
-    df["_col_name"]  = df["_attr_norm"].map(ATTR_MAP)
-
-    # Keep only rows we know how to map
-    mapped = df[df["_col_name"].notna()].copy()
-
-    if mapped.empty:
-        # Show unmapped attribute names to help debugging
-        sample = df["_attr_norm"].unique()[:15].tolist()
-        st.warning(f"No attribute names matched the mapping. Sample values: {sample}")
-        return df
-
-    # ------------------------------------------------------------------
-    # Deduplicate: keep most recent as_of_date per
-    # (company, period_type, cash_flow_date, attribute)
-    # ------------------------------------------------------------------
-    group_keys = [company_col, date_col, "_col_name"]
-    if period_col:
-        group_keys.insert(1, period_col)
-    if as_of_col:
-        mapped = (mapped.sort_values(as_of_col)
-                        .groupby(group_keys, as_index=False)
-                        .last())
-    else:
-        mapped = mapped.groupby(group_keys, as_index=False).last()
-
-    # ------------------------------------------------------------------
-    # Pivot to wide: one row per (company, period_type, cash_flow_date)
-    # ------------------------------------------------------------------
-    pivot_index = [company_col, date_col]
-    if period_col:
-        pivot_index.insert(1, period_col)
-
-    wide = mapped.pivot_table(
-        index=pivot_index,
-        columns="_col_name",
-        values=val_col,
-        aggfunc="last"
-    ).reset_index()
-    wide.columns.name = None
-
-    # Standardise column names
-    rename = {company_col: "company_name", date_col: "cash_flow_date"}
-    if period_col:
-        rename[period_col] = "period"
-    wide = wide.rename(columns=rename)
-
-    wide["cash_flow_date"] = pd.to_datetime(wide["cash_flow_date"], errors="coerce")
-
-    # period_label for Quarterly grouping compatibility
-    wide["period_label"] = wide["cash_flow_date"].dt.to_period("Q").astype(str)
-
-    return wide.sort_values(["company_name", "cash_flow_date"])
+    combined = pd.concat(frames, ignore_index=True)
+    combined["cash_flow_date"] = pd.to_datetime(combined["cash_flow_date"], errors="coerce")
+    return combined.sort_values(["company_name", "cash_flow_date"])
 
 def load_quarterly(company_name: str = None) -> pd.DataFrame:
     df = load_quarterly_all()
