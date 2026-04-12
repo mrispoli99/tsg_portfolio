@@ -16,7 +16,21 @@ def _csv(filename: str) -> pd.DataFrame:
     if not path.exists():
         st.warning(f"Data file not found: `{filename}` (looked in `{DATA_DIR}`)")
         return pd.DataFrame()
-    df = pd.read_csv(path, low_memory=False)
+    # Try encodings in order — SQL Server / Excel exports are often latin-1 or cp1252
+    for encoding in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
+        try:
+            df = pd.read_csv(path, low_memory=False, encoding=encoding)
+            for col in df.columns:
+                if any(x in col.lower() for x in ["date", "published"]):
+                    try:
+                        df[col] = pd.to_datetime(df[col], errors="coerce")
+                    except Exception:
+                        pass
+            return df
+        except UnicodeDecodeError:
+            continue
+    # Last resort: ignore undecodable bytes
+    df = pd.read_csv(path, low_memory=False, encoding="latin-1", errors="replace")
     for col in df.columns:
         if any(x in col.lower() for x in ["date", "published"]):
             try:
