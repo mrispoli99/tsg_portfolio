@@ -19,9 +19,11 @@ import base64
 from datetime import datetime
 
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.io as pio
-from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use("Agg")  # headless — no display needed, no Chrome/Kaleido
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
 # Guard pptx imports — if missing, module still loads but page shows error
 try:
     from pptx import Presentation
@@ -119,14 +121,36 @@ def add_rect(slide, x, y, w, h, fill_color=C_NAVY, line_color=None):
     return shape
 
 
-def plotly_to_image(fig, width=900, height=320) -> bytes:
-    """Convert Plotly figure to PNG bytes."""
-    return pio.to_image(fig, format="png", width=width, height=height, scale=2)
+# ---------------------------------------------------------------------------
+# Chart colors (hex strings for matplotlib)
+# ---------------------------------------------------------------------------
+M_NAVY     = "#071733"
+M_SLATE    = "#3F6680"
+M_SKY      = "#A8CFDE"
+M_XANTHOUS = "#F3B51F"
+M_GREEN    = "#06865C"
+M_RED      = "#C0392B"
+M_BORDER   = "#E0E4EA"
+M_LIGHT    = "#F4F6F9"
+COMPANY_COLORS = [
+    M_NAVY, M_SLATE, M_SKY, M_XANTHOUS, M_GREEN, M_RED,
+    "#A21586", "#483348", "#3498DB", "#E67E22",
+    "#9B59B6", "#1ABC9C", "#E74C3C", "#2ECC71",
+]
 
 
-def add_chart_image(slide, fig, x, y, w, h, width_px=900, height_px=300):
-    """Render a Plotly chart and embed as image in slide."""
-    img_bytes = plotly_to_image(fig, width=width_px, height=height_px)
+def _mpl_fig_to_bytes(fig, dpi=150) -> bytes:
+    """Render a matplotlib figure to PNG bytes and close the figure."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def add_chart_image(slide, img_bytes: bytes, x, y, w, h):
+    """Embed a PNG (bytes) into a slide at the given position."""
     img_stream = io.BytesIO(img_bytes)
     slide.shapes.add_picture(img_stream, Inches(x), Inches(y), Inches(w), Inches(h))
 
@@ -271,40 +295,66 @@ def slide_portfolio_overview(prs, overview, flags_df):
 
 
 def slide_trend_chart(prs, quarterly_df):
-    """Portfolio revenue & EBITDA trend slide."""
+    """Portfolio revenue & EBITDA trend slide — rendered with matplotlib (no Chrome needed)."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     slide.background.fill.solid()
     slide.background.fill.fore_color.rgb = C_LIGHT
     slide_header(slide, "Portfolio Revenue & EBITDA Trend")
 
-    agg = quarterly_df.groupby("period_label").agg(
-        revenue    = ("revenue", "sum"),
-        adj_ebitda = ("adj_ebitda", "sum"),
-        cash_flow_date = ("cash_flow_date", "max")
-    ).reset_index().sort_values("cash_flow_date").tail(12)
+    agg = (quarterly_df
+           .groupby("period_label")
+           .agg(revenue=("revenue", "sum"),
+                adj_ebitda=("adj_ebitda", "sum"),
+                cash_flow_date=("cash_flow_date", "max"))
+           .reset_index()
+           .sort_values("cash_flow_date")
+           .tail(12))
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=agg["period_label"], y=agg["revenue"],
-                          name="Revenue ($M)", marker_color=f"#{P_SLATE}",
-                          opacity=0.85), secondary_y=False)
-    fig.add_trace(go.Bar(x=agg["period_label"], y=agg["adj_ebitda"],
-                          name="Adj. EBITDA ($M)", marker_color=f"#{P_SKY}",
-                          opacity=0.85), secondary_y=False)
-    margin = agg["adj_ebitda"] / agg["revenue"].replace(0, float("nan"))
-    fig.add_trace(go.Scatter(x=agg["period_label"], y=margin,
-                              name="EBITDA Margin %", mode="lines+markers",
-                              line=dict(color=f"#{P_XANTHOUS}", width=3)),
-                  secondary_y=True)
-    fig.update_layout(
-        height=380, plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=20, r=20, t=10, b=40), barmode="group",
-        legend=dict(orientation="h", y=-0.15, font=dict(size=10)),
-        font=dict(family="Arial", color=f"#{P_NAVY}", size=11),
-    )
-    fig.update_yaxes(tickformat="$,.0f", gridcolor=f"#{P_BORDER}", secondary_y=False)
-    fig.update_yaxes(tickformat=".0%", secondary_y=True)
-    fig.update_xaxes(tickangle=-45)
-    add_chart_image(slide, fig, 0.5, 0.75, 12.3, 6.4, width_px=1200, height_px=480)
+    if agg.empty:
+        add_text(slide, "No trend data available", 0.5, 2.0, 8.0, 0.5,
+                 size=12, color=C_SLATE)
+        return
+
+    labels = agg["period_label"].tolist()
+    rev    = agg["revenue"].tolist()
+    ebitda = agg["adj_ebitda"].tolist()
+    margin = [e / r if r else 0 for r, e in zip(rev, ebitda)]
+    x      = np.arange(len(labels))
+    bar_w  = 0.38
+
+    fig, ax1 = plt.subplots(figsize=(12, 4.5), facecolor="white")
+    ax2 = ax1.twinx()
+
+    bars1 = ax1.bar(x - bar_w / 2, rev,    bar_w, label="Revenue ($M)",    color=M_SLATE,    alpha=0.85)
+    bars2 = ax1.bar(x + bar_w / 2, ebitda, bar_w, label="Adj. EBITDA ($M)",color=M_SKY,      alpha=0.85)
+    line,  = ax2.plot(x, margin, color=M_XANTHOUS, linewidth=2.5,
+                      marker="o", markersize=5, label="EBITDA Margin %")
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, rotation=45, ha="right", fontsize=8, color=M_NAVY)
+    ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax1.tick_params(axis="y", labelsize=8, colors=M_NAVY)
+    ax1.set_ylabel("$M", fontsize=9, color=M_NAVY)
+    ax1.spines[["top", "right"]].set_visible(False)
+    ax1.spines[["left", "bottom"]].set_color(M_BORDER)
+    ax1.set_facecolor("white")
+    ax1.yaxis.grid(True, color=M_BORDER, linewidth=0.5)
+    ax1.set_axisbelow(True)
+
+    ax2.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+    ax2.tick_params(axis="y", labelsize=8, colors=M_XANTHOUS)
+    ax2.set_ylabel("Margin %", fontsize=9, color=M_XANTHOUS)
+    ax2.spines[["top", "left"]].set_visible(False)
+    ax2.spines[["right", "bottom"]].set_color(M_BORDER)
+
+    handles = [bars1, bars2, line]
+    labels_leg = ["Revenue ($M)", "Adj. EBITDA ($M)", "EBITDA Margin %"]
+    ax1.legend(handles, labels_leg, loc="upper left", fontsize=8,
+               framealpha=0.9, ncol=3)
+
+    fig.tight_layout(pad=0.5)
+    img_bytes = _mpl_fig_to_bytes(fig, dpi=160)
+    add_chart_image(slide, img_bytes, 0.5, 0.75, 12.3, 6.4)
 
 
 def slide_fund_summary(prs, fs_df):
@@ -461,30 +511,46 @@ def slide_company(prs, company_name: str, flag_row, quarterly_df):
     # Revenue & EBITDA chart
     comp_q = quarterly_df[quarterly_df["company_name"] == company_name].copy()
     if not comp_q.empty:
-        rev = comp_q["revenue"].combine_first(comp_q["net_sales"])
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Bar(x=comp_q["period_label"], y=rev,
-                              name="Revenue", marker_color=f"#{P_NAVY}", opacity=0.8),
-                      secondary_y=False)
-        fig.add_trace(go.Bar(x=comp_q["period_label"], y=comp_q["adj_ebitda"],
-                              name="Adj. EBITDA", marker_color=f"#{P_SLATE}", opacity=0.8),
-                      secondary_y=False)
-        margin = comp_q["adj_ebitda"] / rev.replace(0, float("nan"))
-        fig.add_trace(go.Scatter(x=comp_q["period_label"], y=margin,
-                                  name="Margin %", mode="lines+markers",
-                                  line=dict(color=f"#{P_XANTHOUS}", width=2)),
-                      secondary_y=True)
-        fig.update_layout(
-            height=260, plot_bgcolor="white", paper_bgcolor="white",
-            margin=dict(l=20, r=20, t=10, b=40), barmode="group",
-            legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
-            font=dict(family="Arial", size=9, color=f"#{P_NAVY}"),
-            showlegend=True,
-        )
-        fig.update_yaxes(tickformat="$,.0f", gridcolor=f"#{P_BORDER}", secondary_y=False)
-        fig.update_yaxes(tickformat=".0%", secondary_y=True)
-        fig.update_xaxes(tickangle=-45, nticks=8)
-        add_chart_image(slide, fig, 0.3, 2.2, 8.5, 5.0, width_px=860, height_px=340)
+        comp_q = comp_q.sort_values("cash_flow_date").tail(10)
+        rev_series = comp_q["revenue"].combine_first(comp_q["net_sales"])
+        labels = comp_q["period_label"].tolist()
+        rev    = rev_series.tolist()
+        ebitda = comp_q["adj_ebitda"].tolist()
+        margin = [e / r if r else 0 for r, e in zip(rev, ebitda)]
+        x      = np.arange(len(labels))
+        bar_w  = 0.38
+
+        fig, ax1 = plt.subplots(figsize=(8.5, 4.8), facecolor="white")
+        ax2 = ax1.twinx()
+
+        ax1.bar(x - bar_w / 2, rev,    bar_w, label="Revenue",    color=M_NAVY,  alpha=0.82)
+        ax1.bar(x + bar_w / 2, ebitda, bar_w, label="Adj. EBITDA",color=M_SLATE, alpha=0.82)
+        ax2.plot(x, margin, color=M_XANTHOUS, linewidth=2,
+                 marker="o", markersize=4, label="Margin %")
+
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(labels, rotation=45, ha="right", fontsize=7, color=M_NAVY)
+        ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+        ax1.tick_params(axis="y", labelsize=7, colors=M_NAVY)
+        ax1.spines[["top", "right"]].set_visible(False)
+        ax1.spines[["left", "bottom"]].set_color(M_BORDER)
+        ax1.set_facecolor("white")
+        ax1.yaxis.grid(True, color=M_BORDER, linewidth=0.5)
+        ax1.set_axisbelow(True)
+
+        ax2.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+        ax2.tick_params(axis="y", labelsize=7, colors=M_XANTHOUS)
+        ax2.spines[["top", "left"]].set_visible(False)
+        ax2.spines[["right", "bottom"]].set_color(M_BORDER)
+
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2,
+                   loc="upper left", fontsize=7, framealpha=0.9, ncol=3)
+
+        fig.tight_layout(pad=0.4)
+        img_bytes = _mpl_fig_to_bytes(fig, dpi=150)
+        add_chart_image(slide, img_bytes, 0.3, 2.2, 8.5, 5.0)
 
     # Flag detail box
     flag_items = []
@@ -582,12 +648,9 @@ def page_export():
         )
         return
     try:
-        import kaleido  # noqa — needed for plotly image export
-    except ImportError:
-        st.warning(
-            "**kaleido** is not installed — chart images will be skipped. "
-            "Add `kaleido==0.2.1` to `requirements.txt` to enable them."
-        )
+        pass  # kaleido no longer required — charts use matplotlib
+    except Exception:
+        pass
     NAVY  = "#071733"
     SLATE = "#3F6680"
     SKY   = "#A8CFDE"
