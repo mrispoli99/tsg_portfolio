@@ -366,30 +366,35 @@ def slide_fund_summary(prs, fs_df):
 
     cols = ["company_name","sector","investment_date","security_type",
             "entry_tev","current_tev","gross_moi","ltm_revenue","net_leverage",
-            "ltm_adj_ebitda_margin","revenue_yoy","overall_flag"]
+            "ltm_ebitda_margin","revenue_yoy","overall_flag"]
     headers = ["Company","Sector","Entry","Security","Entry TEV",
                "Current TEV","Gross MOI","LTM Rev","Net Lev","EBITDA Mgn","Rev Growth","Flag"]
 
-    display = fs_df[cols].copy()
-    display["investment_date"]      = pd.to_datetime(display["investment_date"]).dt.strftime("%b %y")
-    display["entry_tev"]            = display["entry_tev"].apply(format_millions)
-    display["current_tev"]          = display["current_tev"].apply(format_millions)
-    display["gross_moi"]            = display["gross_moi"].apply(format_multiple)
-    display["ltm_revenue"]          = display["ltm_revenue"].apply(format_millions)
-    display["net_leverage"]         = display["net_leverage"].apply(format_multiple)
-    display["ltm_adj_ebitda_margin"]= display["ltm_adj_ebitda_margin"].apply(format_pct)
-    display["revenue_yoy"]          = display["revenue_yoy"].apply(format_pct)
+    # Only keep columns that actually exist in the dataframe
+    available = [c for c in cols if c in fs_df.columns]
+    available_headers = [h for c, h in zip(cols, headers) if c in fs_df.columns]
 
-    table_data = [headers] + display.values.tolist()
+    display = fs_df[available].copy()
+    display["investment_date"]   = pd.to_datetime(display["investment_date"]).dt.strftime("%b %y")
+    display["entry_tev"]         = display["entry_tev"].apply(format_millions)
+    display["current_tev"]       = display["current_tev"].apply(format_millions)
+    display["gross_moi"]         = display["gross_moi"].apply(format_multiple)
+    display["ltm_revenue"]       = display["ltm_revenue"].apply(format_millions)
+    display["net_leverage"]      = display["net_leverage"].apply(format_multiple)
+    display["ltm_ebitda_margin"] = display["ltm_ebitda_margin"].apply(format_pct)
+    display["revenue_yoy"]       = display["revenue_yoy"].apply(format_pct)
+
+    table_data = [available_headers] + display.values.tolist()
     row_count  = min(len(table_data), 21)
 
     tbl = slide.shapes.add_table(
-        row_count, len(headers),
+        row_count, len(available_headers),
         Inches(0.2), Inches(0.75),
         Inches(12.9), Inches(6.5)
     ).table
 
-    col_widths = [2.0, 1.4, 0.7, 1.0, 0.9, 0.9, 0.8, 0.8, 0.7, 0.8, 0.8, 0.6]
+    all_col_widths = [2.0, 1.4, 0.7, 1.0, 0.9, 0.9, 0.8, 0.8, 0.7, 0.8, 0.8, 0.6]
+    col_widths = all_col_widths[:len(available_headers)]
     for i, w in enumerate(col_widths):
         tbl.columns[i].width = Inches(w)
 
@@ -408,7 +413,7 @@ def slide_fund_summary(prs, fs_df):
                 run.font.color.rgb = C_WHITE
                 cell.fill.solid()
                 cell.fill.fore_color.rgb = C_NAVY
-            elif c_idx == len(headers) - 1:
+            elif c_idx == len(available_headers) - 1:
                 run.font.color.rgb = flag_color_rgb(str(cell_text))
                 run.font.bold = True
             else:
