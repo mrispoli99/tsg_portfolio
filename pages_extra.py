@@ -635,30 +635,29 @@ def page_company_detail_enhanced():
             # KPI definitions for this table
             # (display_label, column, format_fn, is_pct, threshold_fn)
             # threshold_fn: given value, returns "Red"|"Yellow"|"Green"|None
+            # Column names match exactly what's in the CSV — ltm_ prefix only when metric says LTM
             CO_KPI_DEFS = [
-                ("LTM Revenue ($M)",       "ltm_revenue",               format_millions, False,
+                ("LTM Revenue ($M)",       "ltm_revenue",           format_millions, False,
                     None),
-                ("LTM Adj. EBITDA ($M)",   "ltm_adj_ebitda",            format_millions, False,
+                ("LTM Adj. EBITDA ($M)",   "ltm_adj_ebitda",        format_millions, False,
                     None),
-                ("EBITDA Margin %",         "ltm_adj_ebitda_margin_pct", format_pct,      True,
+                ("EBITDA Margin %",         "adj_ebitda_margin_pct", format_pct,      True,
                     lambda v: "Green" if v > 0.18 else "Yellow" if v > 0.10 else "Red"),
-                ("Gross Profit ($M)",       "ltm_gross_profit",          format_millions, False,
+                ("Gross Profit ($M)",       "gross_profit",          format_millions, False,
                     None),
-                ("Gross Margin %",          "ltm_gross_margin_pct",      format_pct,      True,
+                ("Gross Margin %",          "gross_margin_pct",      format_pct,      True,
                     None),
                 ("Net Leverage",            "net_leverage",          format_multiple, False,
                     lambda v: "Green" if v < 5 else "Yellow" if v < 6 else "Red"),
                 ("Interest Coverage",       "interest_coverage",     format_multiple, False,
                     lambda v: "Green" if v > 3 else "Yellow" if v > 2 else "Red"),
-                ("Debt Svc Coverage",       "debt_service_coverage", format_multiple, False,
-                    lambda v: "Green" if v > 2.5 else "Yellow" if v > 1.2 else "Red"),
                 ("Net Debt ($M)",           "net_debt",              format_millions, False,
                     None),
                 ("Total Gross Debt ($M)",   "total_gross_debt",      format_millions, False,
                     None),
-                ("Free Cash Flow ($M)",     "free_cash_flow",        format_millions, False,
+                ("LTM Free Cash Flow ($M)", "ltm_free_cash_flow",    format_millions, False,
                     lambda v: "Green" if v > 0 else "Red"),
-                ("LTM Capex ($M)",          "capex",                 format_millions, False,
+                ("LTM Capex ($M)",          "ltm_capex",             format_millions, False,
                     None),
             ]
 
@@ -687,9 +686,13 @@ def page_company_detail_enhanced():
                     if sub.empty:
                         val = None
                     else:
-                        # Most recent LTM value within the period
-                        v = sub.sort_values("cash_flow_date").iloc[-1][col]
-                        val = None if pd.isna(v) else float(v)
+                        # Use exact column as specified in CO_KPI_DEFS — no ltm_ prefix guessing.
+                        # Take last non-null value (duplicate rows per period exist in the data).
+                        if col in sub.columns:
+                            non_null = sub[col].dropna()
+                            val = float(non_null.iloc[-1]) if not non_null.empty else None
+                        else:
+                            val = None
 
                     raw_vals[lbl][p] = val
                     row[p] = fmt(val) if val is not None else "—"
@@ -819,9 +822,9 @@ def page_company_detail_enhanced():
                 # Chart type mapping
                 _CO_MULTILINE = {
                     "LTM Revenue ($M)", "LTM Adj. EBITDA ($M)", "Gross Profit ($M)",
-                    "Gross Margin %", "EBITDA Margin %", "Free Cash Flow ($M)", "LTM Capex ($M)",
+                    "Gross Margin %", "EBITDA Margin %", "LTM Free Cash Flow ($M)", "LTM Capex ($M)",
                 }
-                _CO_GROUPED_BAR = {"Net Leverage", "Interest Coverage", "Debt Svc Coverage",
+                _CO_GROUPED_BAR = {"Net Leverage", "Interest Coverage",
                                    "Net Debt ($M)", "Total Gross Debt ($M)"}
 
                 # Find the column and format for the active KPI
@@ -833,6 +836,7 @@ def page_company_detail_enhanced():
                     ts = (q_chart_filtered[["_plabel", "cash_flow_date", a_col]]
                           .dropna(subset=[a_col])
                           .sort_values("cash_flow_date")
+                          .drop_duplicates(subset=["_plabel"], keep="last")
                           .copy())
 
                     if len(ts) >= 1:

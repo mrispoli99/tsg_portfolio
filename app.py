@@ -1011,12 +1011,13 @@ def page_portfolio_overview():
                 if _t1_q.empty: return None
                 sub = _t1_q[(_t1_q["company_name"] == cname) & (_t1_q["_plabel"] == period)]
                 if sub.empty: return None
-                sub = sub.sort_values("cash_flow_date")
-                # Prefer ltm_ prefixed column, then plain column
-                for try_col in [f"ltm_{_t1_col}", _t1_col]:
-                    if try_col in sub.columns:
-                        v = sub.iloc[-1][try_col]
-                        if not pd.isna(v): return float(v)
+                # Use exact column as specified in _T1_METRIC_DEFS — no ltm_ prefix guessing.
+                # "LTM Revenue" already maps to "ltm_revenue"; non-LTM metrics map to their
+                # plain column. Take last non-null to handle duplicate rows per period.
+                if _t1_col in sub.columns:
+                    non_null = sub[_t1_col].dropna()
+                    if not non_null.empty:
+                        return float(non_null.iloc[-1])
                 return None
             elif _t1_src == "fs":
                 sub = fs_filtered[fs_filtered["company_name"] == cname]
@@ -1104,11 +1105,8 @@ def page_portfolio_overview():
                                 "diamond", "cross", "triangle-up", "star", "hexagon", "pentagon"]
 
             if _t1_sel in _MULTILINE_METRICS and not _t1_q.empty and _t1_src == "q":
-                _t1_resolved_col = None
-                for try_col in [f"ltm_{_t1_col}", _t1_col]:
-                    if try_col in _t1_q.columns:
-                        _t1_resolved_col = try_col
-                        break
+                # Use exact column as specified — no ltm_ prefix guessing
+                _t1_resolved_col = _t1_col if _t1_col in _t1_q.columns else None
 
                 if _t1_resolved_col:
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -1122,6 +1120,7 @@ def page_portfolio_overview():
                             [["_plabel", "cash_flow_date", _t1_resolved_col]]
                             .dropna(subset=[_t1_resolved_col])
                             .sort_values("cash_flow_date")
+                            .drop_duplicates(subset=["_plabel"], keep="last")
                             .copy()
                         )
                         if _co_ts.empty:
@@ -1154,11 +1153,7 @@ def page_portfolio_overview():
                     st.plotly_chart(_fig_line, use_container_width=True)
 
             elif _t1_sel in _GROUPED_BAR_METRICS and not _t1_q.empty and _t1_src == "q":
-                _t1_resolved_col = None
-                for try_col in [f"ltm_{_t1_col}", _t1_col]:
-                    if try_col in _t1_q.columns:
-                        _t1_resolved_col = try_col
-                        break
+                _t1_resolved_col = _t1_col if _t1_col in _t1_q.columns else None
                 if _t1_resolved_col:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown(f'<div class="section-header">{_t1_sel} — by Company & Period</div>',
@@ -1169,7 +1164,9 @@ def page_portfolio_overview():
                             _t1_q[_t1_q["company_name"] == cname]
                             [["_plabel", "cash_flow_date", _t1_resolved_col]]
                             .dropna(subset=[_t1_resolved_col])
-                            .sort_values("cash_flow_date").copy()
+                            .sort_values("cash_flow_date")
+                            .drop_duplicates(subset=["_plabel"], keep="last")
+                            .copy()
                         )
                         if _co_ts.empty: continue
                         _fig_gb.add_trace(go.Bar(
@@ -1188,11 +1185,7 @@ def page_portfolio_overview():
                     st.plotly_chart(_fig_gb, use_container_width=True)
 
             elif _t1_sel in _STACKED_BAR_METRICS and not _t1_q.empty and _t1_src == "q":
-                _t1_resolved_col = None
-                for try_col in [f"ltm_{_t1_col}", _t1_col]:
-                    if try_col in _t1_q.columns:
-                        _t1_resolved_col = try_col
-                        break
+                _t1_resolved_col = _t1_col if _t1_col in _t1_q.columns else None
                 if _t1_resolved_col:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown(f'<div class="section-header">{_t1_sel} — Stacked by Company</div>',
@@ -1203,7 +1196,9 @@ def page_portfolio_overview():
                             _t1_q[_t1_q["company_name"] == cname]
                             [["_plabel", "cash_flow_date", _t1_resolved_col]]
                             .dropna(subset=[_t1_resolved_col])
-                            .sort_values("cash_flow_date").copy()
+                            .sort_values("cash_flow_date")
+                            .drop_duplicates(subset=["_plabel"], keep="last")
+                            .copy()
                         )
                         if _co_ts.empty: continue
                         _fig_sb.add_trace(go.Bar(
