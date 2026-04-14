@@ -484,13 +484,35 @@ def page_company_detail_enhanced():
 
     with tab1:
         quarterly = load_quarterly(selected)
-        # Limit to most recent 3 years
+        # Parse dates
         if not quarterly.empty and "cash_flow_date" in quarterly.columns:
             import pandas as _pd
             quarterly = quarterly.copy()
             quarterly["cash_flow_date"] = _pd.to_datetime(quarterly["cash_flow_date"], errors="coerce")
+
+        # ----------------------------------------------------------------
+        # PERIOD SELECTOR — applies to ALL charts and the datasheet table
+        # ----------------------------------------------------------------
+        _pm_col, _ = st.columns([3, 5])
+        with _pm_col:
+            co_period_mode = st.radio(
+                "Period",
+                ["Quarterly", "Monthly", "Yearly"],
+                horizontal=True,
+                key=f"co_period_mode_{selected}",
+                label_visibility="collapsed",
+            )
+
+        # Filter all data to selected period type only
+        _period_type_map = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
+        if not quarterly.empty and "period" in quarterly.columns:
+            quarterly = quarterly[quarterly["period"] == _period_type_map.get(co_period_mode, "Quarterly")].copy()
+
+        # Apply 3-year rolling window
+        if not quarterly.empty:
             _cutoff = _pd.Timestamp.now() - _pd.DateOffset(years=3)
             quarterly = quarterly[quarterly["cash_flow_date"] >= _cutoff]
+
         if not quarterly.empty:
             # Revenue & EBITDA trend
             st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
@@ -498,30 +520,33 @@ def page_company_detail_enhanced():
             from plotly.subplots import make_subplots
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             rev = quarterly["revenue"].combine_first(quarterly["net_sales"])
+            # Drop NaN for connected margin line
+            _margin_s = (quarterly["adj_ebitda"] / rev.replace(0, float("nan")))
+            _margin_df = pd.DataFrame({"period_label": quarterly["period_label"], "margin": _margin_s}).dropna()
             fig.add_trace(go.Bar(x=quarterly["period_label"], y=rev,
                                   name="Revenue ($M)", marker_color=NAVY, opacity=0.8),
                           secondary_y=False)
             fig.add_trace(go.Bar(x=quarterly["period_label"], y=quarterly["adj_ebitda"],
                                   name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8),
                           secondary_y=False)
-            margin = quarterly["adj_ebitda"] / rev.replace(0, float("nan"))
-            fig.add_trace(go.Scatter(x=quarterly["period_label"], y=margin,
+            fig.add_trace(go.Scatter(x=_margin_df["period_label"], y=_margin_df["margin"],
                                       name="EBITDA Margin %", mode="lines+markers",
-                                      line=dict(color=XANTHOUS, width=2)),
+                                      line=dict(color=XANTHOUS, width=2),
+                                      connectgaps=True),
                           secondary_y=True)
-            fig.update_layout(height=300, plot_bgcolor="white", paper_bgcolor="white",
+            fig.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="white",
                                margin=dict(l=0,r=0,t=10,b=0), barmode="group",
-                               legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+                               legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
                                font=dict(family="Arial", color=NAVY, size=10))
             fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
             fig.update_yaxes(tickformat=".0%", secondary_y=True)
-            fig.update_xaxes(tickangle=-45)
+            fig.update_xaxes(tickangle=-45, tickmode="linear", dtick=1, tickfont=dict(size=9))
             st.plotly_chart(fig, use_container_width=True)
 
             # Leverage and Margin side by side
             col_lev, col_mgn = st.columns(2)
             with col_lev:
-                st.markdown('<div class="section-header">Net Leverage</div>',
+                st.markdown(f'<div class="section-header">Net Leverage — {co_period_mode}</div>',
                             unsafe_allow_html=True)
                 lev_df = quarterly.dropna(subset=["net_leverage"])
                 if not lev_df.empty:
@@ -535,16 +560,17 @@ def page_company_detail_enhanced():
                         marker_color=[RED_FLAG if v > 6 else XANTHOUS if v > 5 else NAVY
                                       for v in lev_df["net_leverage"]]
                     ))
-                    fig3.update_layout(height=240, plot_bgcolor="white",
+                    fig3.update_layout(height=340, plot_bgcolor="white",
                                         paper_bgcolor="white",
                                         margin=dict(l=0,r=0,t=10,b=0),
                                         font=dict(family="Arial", color=NAVY, size=10),
                                         yaxis=dict(gridcolor=BORDER))
-                    fig3.update_xaxes(tickangle=-45)
+                    fig3.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                                      tickfont=dict(size=8))
                     st.plotly_chart(fig3, use_container_width=True)
 
             with col_mgn:
-                st.markdown('<div class="section-header">EBITDA Margin %</div>',
+                st.markdown(f'<div class="section-header">EBITDA Margin % — {co_period_mode}</div>',
                             unsafe_allow_html=True)
                 mgn_df = quarterly.dropna(subset=["adj_ebitda_margin_pct"])
                 if not mgn_df.empty:
@@ -557,26 +583,27 @@ def page_company_detail_enhanced():
                         x=mgn_df["period_label"], y=mgn_df["adj_ebitda_margin_pct"],
                         mode="lines+markers",
                         line=dict(color=SLATE, width=2),
-                        fill="tozeroy", fillcolor="rgba(63,102,128,0.1)"
+                        fill="tozeroy", fillcolor="rgba(63,102,128,0.1)",
+                        connectgaps=True,
                     ))
-                    fig4.update_layout(height=240, plot_bgcolor="white",
+                    fig4.update_layout(height=340, plot_bgcolor="white",
                                         paper_bgcolor="white",
                                         margin=dict(l=0,r=0,t=10,b=0),
                                         font=dict(family="Arial", color=NAVY, size=10),
                                         yaxis=dict(tickformat=".0%", gridcolor=BORDER))
-                    fig4.update_xaxes(tickangle=-45)
+                    fig4.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                                      tickfont=dict(size=8))
                     st.plotly_chart(fig4, use_container_width=True)
 
         # ----------------------------------------------------------------
-        # KPI SUMMARY TABLE — KPIs as rows, periods as columns
-        # with Δ% change column per period, for this company only
+        # COMPANY DATASHEET — KPIs as rows, periods as columns
         # ----------------------------------------------------------------
         st.markdown("<hr style='border:1px solid #E0E4EA;margin:28px 0 16px 0;'>",
                     unsafe_allow_html=True)
         st.markdown('<div class="section-header">Company Datasheet</div>',
                     unsafe_allow_html=True)
 
-        # Reload full quarterly (not 3yr-filtered) for period label building
+        # Reload full data (no 3yr cutoff) for the datasheet table — reuse period filter
         q_all_co = load_quarterly(selected)
         if not q_all_co.empty and "cash_flow_date" in q_all_co.columns:
             import pandas as _pd2
@@ -585,24 +612,11 @@ def page_company_detail_enhanced():
             _co_cutoff = _pd2.Timestamp.now() - _pd2.DateOffset(years=3)
             q_all_co = q_all_co[q_all_co["cash_flow_date"] >= _co_cutoff]
 
-        # Period mode selector — sits above this section only
-        _pm_col, _ = st.columns([2, 5])
-        with _pm_col:
-            co_period_mode = st.radio(
-                "Period",
-                ["Quarterly", "Monthly", "Yearly"],
-                horizontal=True,
-                key=f"co_period_mode_{selected}",
-                label_visibility="visible"
-            )
-
         if not q_all_co.empty:
-            # Filter to the correct period type FIRST — critical to avoid mixing
-            # quarterly, monthly, and annual rows (which share the same columns but
-            # have different magnitudes for non-LTM fields).
+            # Filter to the correct period type (co_period_mode set at top of tab1)
             if "period" in q_all_co.columns:
-                _period_type_map = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
-                q_all_co = q_all_co[q_all_co["period"] == _period_type_map.get(co_period_mode, "Quarterly")]
+                _period_type_map2 = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
+                q_all_co = q_all_co[q_all_co["period"] == _period_type_map2.get(co_period_mode, "Quarterly")]
 
             # Build period label per mode
             if co_period_mode == "Monthly":
