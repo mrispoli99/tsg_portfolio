@@ -877,7 +877,7 @@ def page_portfolio_overview():
             else:
                 agg = pd.DataFrame()
 
-            chart_title = f"Portfolio Revenue & EBITDA — {view_toggle} LTM"
+            chart_title = f"Portfolio Revenue & EBITDA"
 
             if not agg.empty:
                 st.markdown(f'<div class="section-header">{chart_title}</div>',
