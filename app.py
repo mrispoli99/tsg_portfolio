@@ -1012,12 +1012,8 @@ def page_portfolio_overview():
                 sub = _t1_q[(_t1_q["company_name"] == cname) & (_t1_q["_plabel"] == period)]
                 if sub.empty: return None
                 sub = sub.sort_values("cash_flow_date")
-                # Prefer ltm_ prefixed column, then plain column, then revenue fallback for monthly
-                candidates = [f"ltm_{_t1_col}", _t1_col]
-                # For revenue-type metrics in monthly mode, also try plain revenue
-                if tab_period == "Monthly" and _t1_col in ("ltm_revenue", "revenue"):
-                    candidates += ["revenue", "net_sales"]
-                for try_col in candidates:
+                # Prefer ltm_ prefixed column, then plain column
+                for try_col in [f"ltm_{_t1_col}", _t1_col]:
                     if try_col in sub.columns:
                         v = sub.iloc[-1][try_col]
                         if not pd.isna(v): return float(v)
