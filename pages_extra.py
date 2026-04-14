@@ -573,7 +573,7 @@ def page_company_detail_enhanced():
         # ----------------------------------------------------------------
         st.markdown("<hr style='border:1px solid #E0E4EA;margin:28px 0 16px 0;'>",
                     unsafe_allow_html=True)
-        st.markdown('<div class="section-header">KPI Summary — Period View</div>',
+        st.markdown('<div class="section-header">Company Datasheet</div>',
                     unsafe_allow_html=True)
 
         # Reload full quarterly (not 3yr-filtered) for period label building
@@ -771,97 +771,110 @@ def page_company_detail_enhanced():
                         st.markdown('</div>', unsafe_allow_html=True)
 
                 # ----------------------------------------------------------------
-                # PERIOD-OVER-PERIOD CHART — for the selected KPI, this company only
+                # CHART — chart type per spec, with date range selector
                 # ----------------------------------------------------------------
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
-                    f'<div class="section-header">{active_co_kpi} — Period-over-Period</div>',
+                    f'<div class="section-header">{active_co_kpi} — Trend</div>',
                     unsafe_allow_html=True
                 )
+
+                # Date range selector
+                _chart_min = q_all_co["cash_flow_date"].min()
+                _chart_max = q_all_co["cash_flow_date"].max()
+                _default_months = 12 if co_period_mode == "Monthly" else 24
+                _chart_default_start = max(_chart_min, _chart_max - pd.DateOffset(months=_default_months))
+                _dr_col, _ = st.columns([3, 4])
+                with _dr_col:
+                    _chart_range = st.date_input(
+                        "Date range",
+                        value=(_chart_default_start.date(), _chart_max.date()),
+                        min_value=_chart_min.date(),
+                        max_value=_chart_max.date(),
+                        key=f"co_chart_range_{selected}_{active_co_kpi}",
+                        label_visibility="collapsed",
+                    )
+
+                q_chart_filtered = q_all_co.copy()
+                if isinstance(_chart_range, (list, tuple)) and len(_chart_range) == 2:
+                    q_chart_filtered = q_chart_filtered[
+                        (q_chart_filtered["cash_flow_date"] >= pd.Timestamp(_chart_range[0])) &
+                        (q_chart_filtered["cash_flow_date"] <= pd.Timestamp(_chart_range[1]))
+                    ]
+
+                # Chart type mapping
+                _CO_MULTILINE = {
+                    "LTM Revenue ($M)", "LTM Adj. EBITDA ($M)", "Gross Profit ($M)",
+                    "Gross Margin %", "EBITDA Margin %", "Free Cash Flow ($M)", "LTM Capex ($M)",
+                }
+                _CO_GROUPED_BAR = {"Net Leverage", "Interest Coverage", "Debt Svc Coverage",
+                                   "Net Debt ($M)", "Total Gross Debt ($M)"}
 
                 # Find the column and format for the active KPI
                 active_def = next(
                     (d for d in CO_KPI_DEFS if d[0] == active_co_kpi), None
                 )
-                if active_def and active_def[1] in q_all_co.columns:
+                if active_def and active_def[1] in q_chart_filtered.columns:
                     _, a_col, a_fmt, a_is_pct, a_thresh = active_def
-                    ts = (q_all_co[["_plabel", "cash_flow_date", a_col]]
+                    ts = (q_chart_filtered[["_plabel", "cash_flow_date", a_col]]
                           .dropna(subset=[a_col])
                           .sort_values("cash_flow_date")
                           .copy())
 
-                    if len(ts) >= 2:
-                        # Bar = absolute value, line overlay = Δ% change
-                        ts["_prev"] = ts[a_col].shift(1)
-                        ts["_chg_pct"] = ((ts[a_col] - ts["_prev"]) /
-                                          ts["_prev"].abs()).where(
-                            ts["_prev"].notna() & (ts["_prev"] != 0))
+                    if len(ts) >= 1:
+                        tick_fmt = ".0%" if a_is_pct else "$,.0f"
 
-                        bar_colors = []
-                        for v in ts[a_col]:
-                            if a_thresh:
-                                flag = a_thresh(v)
-                                bar_colors.append(
-                                    {"Green": SEA_GREEN, "Yellow": XANTHOUS,
-                                     "Red": RED_FLAG}.get(flag, NAVY)
-                                )
-                            else:
-                                bar_colors.append(NAVY)
-
-                        from plotly.subplots import make_subplots as _msp2
-                        fig_co_kpi = _msp2(specs=[[{"secondary_y": True}]])
-
-                        # Primary axis — absolute values as bars
-                        fig_co_kpi.add_trace(
-                            go.Bar(
+                        if active_co_kpi in _CO_GROUPED_BAR:
+                            # Grouped/colored bar chart
+                            bar_colors = []
+                            for v in ts[a_col]:
+                                if a_thresh:
+                                    fl = a_thresh(v)
+                                    bar_colors.append(
+                                        {"Green": SEA_GREEN, "Yellow": XANTHOUS,
+                                         "Red": RED_FLAG}.get(fl, NAVY))
+                                else:
+                                    bar_colors.append(NAVY)
+                            fig_co_kpi = go.Figure(go.Bar(
                                 x=ts["_plabel"], y=ts[a_col],
-                                name=active_co_kpi,
-                                marker_color=bar_colors,
-                                opacity=0.85,
-                            ),
-                            secondary_y=False
-                        )
+                                marker_color=bar_colors, opacity=0.85, name=active_co_kpi,
+                            ))
+                            fig_co_kpi.update_layout(
+                                height=400, plot_bgcolor="white", paper_bgcolor="white",
+                                margin=dict(l=0, r=0, t=10, b=0),
+                                font=dict(family="Arial", color=NAVY, size=10),
+                                xaxis=dict(tickangle=-45, tickmode="linear", dtick=1,
+                                           tickfont=dict(size=9), gridcolor=BORDER),
+                                yaxis=dict(tickformat=tick_fmt, gridcolor=BORDER),
+                            )
+                        else:
+                            # Line chart (default for all LTM metrics)
+                            line_color = (
+                                {"Green": SEA_GREEN, "Yellow": XANTHOUS, "Red": RED_FLAG}
+                                .get(a_thresh(ts[a_col].iloc[-1]), NAVY)
+                                if a_thresh and not ts.empty else NAVY
+                            )
+                            fig_co_kpi = go.Figure(go.Scatter(
+                                x=ts["_plabel"], y=ts[a_col],
+                                mode="lines+markers", name=active_co_kpi,
+                                line=dict(color=line_color, width=2),
+                                marker=dict(size=6),
+                                connectgaps=True,
+                                fill="tozeroy",
+                                fillcolor=f"rgba(7,23,51,0.07)",
+                            ))
+                            fig_co_kpi.update_layout(
+                                height=400, plot_bgcolor="white", paper_bgcolor="white",
+                                margin=dict(l=0, r=0, t=10, b=0),
+                                font=dict(family="Arial", color=NAVY, size=10),
+                                xaxis=dict(tickangle=-45, tickmode="linear", dtick=1,
+                                           tickfont=dict(size=9), gridcolor=BORDER),
+                                yaxis=dict(tickformat=tick_fmt, gridcolor=BORDER),
+                            )
 
-                        # Secondary axis — Δ% as line
-                        fig_co_kpi.add_trace(
-                            go.Scatter(
-                                x=ts["_plabel"], y=ts["_chg_pct"],
-                                name="Δ% vs Prior",
-                                mode="lines+markers",
-                                line=dict(color=XANTHOUS, width=2),
-                                marker=dict(size=5),
-                            ),
-                            secondary_y=True
-                        )
-
-                        tick_fmt_primary = ".0%" if a_is_pct else "$,.0f"
-                        fig_co_kpi.update_layout(
-                            height=340,
-                            plot_bgcolor="white", paper_bgcolor="white",
-                            margin=dict(l=0, r=0, t=10, b=0),
-                            font=dict(family="Arial", color=NAVY, size=10),
-                            legend=dict(orientation="h", y=-0.22, font=dict(size=10)),
-                            xaxis=dict(tickangle=-45, gridcolor=BORDER),
-                            barmode="overlay",
-                        )
-                        fig_co_kpi.update_yaxes(
-                            tickformat=tick_fmt_primary,
-                            gridcolor=BORDER,
-                            secondary_y=False
-                        )
-                        fig_co_kpi.update_yaxes(
-                            tickformat="+.0%",
-                            title_text="Δ% vs Prior Period",
-                            secondary_y=True,
-                            showgrid=False,
-                        )
                         st.plotly_chart(fig_co_kpi, use_container_width=True)
-                        st.caption(
-                            f"Bars = {active_co_kpi} absolute value · "
-                            f"Line = period-over-period % change"
-                        )
                     else:
-                        st.info("Not enough periods to show period-over-period change.")
+                        st.info("Not enough data in the selected date range.")
                 else:
                     st.info(f"{active_co_kpi} data not available in quarterly records.")
             else:

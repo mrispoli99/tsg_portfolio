@@ -758,8 +758,8 @@ def page_portfolio_overview():
     # -----------------------------------------------------------------------
     # TOP 4 FLAG SUMMARY — period-aware Δ in key metrics
     # -----------------------------------------------------------------------
-    st.markdown('<div class="section-header">Portfolio Flag Summary</div>', unsafe_allow_html=True)
-    flag_row_cols = st.columns([1, 1, 1, 1, 1])
+    st.markdown('<div class="section-header">Portfolio Alerts</div>', unsafe_allow_html=True)
+    flag_row_cols = st.columns([1, 1, 1, 1])
 
     # pop_ebitda already computed above from q_latest_snap vs q_prior_snap
     # Use ltm_adj_ebitda from flags if available, otherwise fall back to quarterly
@@ -813,16 +813,6 @@ def page_portfolio_overview():
     # Gross MOIC (pending)
     flag_row_cols[3].markdown(kpi_tile_pending("Gross MOIC"), unsafe_allow_html=True)
 
-    # View buttons
-    flag_row_cols[4].markdown("<br>", unsafe_allow_html=True)
-    if flag_row_cols[4].button("View Flags →", key="po_view_flags", use_container_width=True):
-        st.session_state["page"] = "flags_alerts"
-        st.rerun()
-    if flag_row_cols[4].button("Scorecard Table →", key="po_view_scorecard", use_container_width=True):
-        st.session_state["page"]             = "flags_alerts"
-        st.session_state["flags_view_mode_init"] = "Scorecard Table"
-        st.rerun()
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     # -----------------------------------------------------------------------
@@ -835,7 +825,7 @@ def page_portfolio_overview():
     """, unsafe_allow_html=True)
 
     po_tab1, po_tab2, po_tab3 = st.tabs([
-        "Portfolio Periodic Trends", "By Company Trends", "Company Alerts"
+        "Portfolio Datasheet", "By Company Trends", "Company Alerts"
     ])
     st.markdown("""
     <div title="Select monthly, quarterly, or annual to display period-over-period metrics in total for current TSG portfolio companies" style="display:none"></div>
@@ -877,7 +867,7 @@ def page_portfolio_overview():
             else:
                 agg = pd.DataFrame()
 
-            chart_title = f"Portfolio Revenue & EBITDA"
+            chart_title = f"Portfolio Revenue & EBITDA — {view_toggle}"
 
             if not agg.empty:
                 st.markdown(f'<div class="section-header">{chart_title}</div>',
@@ -896,14 +886,16 @@ def page_portfolio_overview():
                                           marker=dict(size=5)),
                               secondary_y=True)
                 fig.update_layout(
-                    height=340, plot_bgcolor="white", paper_bgcolor="white",
+                    height=360, plot_bgcolor="white", paper_bgcolor="white",
                     margin=dict(l=0, r=0, t=10, b=0), barmode="group",
-                    legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
-                    font=dict(family="Arial", color=NAVY, size=10)
+                    legend=dict(orientation="h", y=-0.18, font=dict(size=11)),
+                    font=dict(family="Arial", color=NAVY, size=11)
                 )
-                fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
-                fig.update_yaxes(tickformat=".0%", secondary_y=True)
-                fig.update_xaxes(tickangle=-45)
+                fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False,
+                                 tickfont=dict(size=11))
+                fig.update_yaxes(tickformat=".0%", secondary_y=True, tickfont=dict(size=11))
+                fig.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                                 tickfont=dict(size=10))
                 st.plotly_chart(fig, use_container_width=True)
 
         with donut_col:
@@ -916,10 +908,10 @@ def page_portfolio_overview():
                                color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS,
                                                          CELADON, SEA_GREEN, MAGENTA, EGGPLANT])
                 fig2.update_traces(textposition="inside", textinfo="percent",
-                                   textfont_size=8)
+                                   textfont_size=12)
                 fig2.update_layout(
                     height=340, showlegend=True,
-                    legend=dict(font=dict(size=8), orientation="v",
+                    legend=dict(font=dict(size=11), orientation="v",
                                 x=1.0, xanchor="left"),
                     margin=dict(l=0, r=80, t=10, b=0),
                     paper_bgcolor="white"
@@ -931,7 +923,7 @@ def page_portfolio_overview():
         # Single metric selectbox (alpha order) above the table
         # ----------------------------------------------------------------
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">KPI Trend by Company</div>',
+        st.markdown('<div class="section-header">Portfolio Datasheet</div>',
                     unsafe_allow_html=True)
         st.caption("Select a metric to see how each company has trended across periods. Δ% = change vs prior period.")
 
@@ -1020,8 +1012,12 @@ def page_portfolio_overview():
                 sub = _t1_q[(_t1_q["company_name"] == cname) & (_t1_q["_plabel"] == period)]
                 if sub.empty: return None
                 sub = sub.sort_values("cash_flow_date")
-                # Prefer ltm_ prefixed column if it exists (pre-calculated LTM)
-                for try_col in [f"ltm_{_t1_col}", _t1_col]:
+                # Prefer ltm_ prefixed column, then plain column, then revenue fallback for monthly
+                candidates = [f"ltm_{_t1_col}", _t1_col]
+                # For revenue-type metrics in monthly mode, also try plain revenue
+                if tab_period == "Monthly" and _t1_col in ("ltm_revenue", "revenue"):
+                    candidates += ["revenue", "net_sales"]
+                for try_col in candidates:
                     if try_col in sub.columns:
                         v = sub.iloc[-1][try_col]
                         if not pd.isna(v): return float(v)
@@ -1078,17 +1074,40 @@ def page_portfolio_overview():
             st.caption(f"**{_t1_sel}** · {tab_period} · Δ% = change vs prior period")
 
             # ----------------------------------------------------------------
-            # COMBO CHART — absolute KPI bars + Δ% line, per company over time
+            # TREND CHART — chart type depends on metric per spec
             # ----------------------------------------------------------------
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown(
-                f'<div class="section-header">{_t1_sel} — Trend & Period-over-Period Δ%</div>',
-                unsafe_allow_html=True
-            )
-            st.caption("Bars = absolute value (left axis) · Line = % change vs prior period (right axis) · one series per company")
+            # Chart type mapping per spec
+            _MULTILINE_METRICS = {
+                "LTM Revenue", "LTM Net Sales", "LTM Adj. EBITDA", "LTM Credit Agmt. EBITDA",
+                "Gross Profit", "LTM Free Cash Flow", "LTM Cash Interest (Gross)",
+                "LTM Cash Taxes", "LTM Mandatory Pmts", "LTM Capex (Excl. M&A)",
+                "LTM Δ NWC", "Rev Growth (YoY)", "Gross Margin %", "EBITDA Margin",
+            }
+            _GROUPED_BAR_METRICS = {
+                "Current Net Debt / EBITDA", "Sr. Secured Leverage", "Total Gross Leverage",
+                "Debt Service Coverage", "Interest Coverage", "Total Gross Debt",
+                "Net Debt", "Current TEV", "Total Net Leverage",
+            }
+            _STACKED_BAR_METRICS = {"Floating Rate Debt", "PIK Debt"}
+            _STATIC_BAR_METRICS  = {
+                "Entry Net Debt / EBITDA", "Entry TEV", "Entry Net Debt",
+                "Entry Net Sales", "Entry EBITDA", "Total Cost",
+            }
+            _DUMBBELL_METRICS = {
+                "Current TEV / EBITDA", "Entry TEV / EBITDA",
+                "Current TEV / Net Sales", "Entry TEV / Net Sales",
+            }
+            _HORIZ_BAR_METRICS = {"Gross IRR", "Gross MOI"}
 
-            if not _t1_q.empty and _t1_src == "q":
-                # Resolve actual column name (prefer ltm_ prefixed)
+            # Distinct line styles for multi-line charts
+            _DASH_PATTERNS = ["solid", "dash", "dot", "dashdot", "longdash", "longdashdot",
+                               "solid", "dash", "dot", "dashdot", "longdash", "longdashdot",
+                               "solid", "dash", "dot", "dashdot"]
+            _MARKER_SYMBOLS = ["circle", "square", "diamond", "cross", "triangle-up",
+                                "star", "hexagon", "pentagon", "circle", "square",
+                                "diamond", "cross", "triangle-up", "star", "hexagon", "pentagon"]
+
+            if _t1_sel in _MULTILINE_METRICS and not _t1_q.empty and _t1_src == "q":
                 _t1_resolved_col = None
                 for try_col in [f"ltm_{_t1_col}", _t1_col]:
                     if try_col in _t1_q.columns:
@@ -1096,80 +1115,230 @@ def page_portfolio_overview():
                         break
 
                 if _t1_resolved_col:
-                    from plotly.subplots import make_subplots as _msp_t1
-                    _fig_combo = _msp_t1(specs=[[{"secondary_y": True}]])
-
-                    _combo_colors = COMPANY_COLORS
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="section-header">{_t1_sel} — Trend by Company</div>',
+                        unsafe_allow_html=True)
+                    _fig_line = go.Figure()
                     for ci, cname in enumerate(_t1_companies):
                         _co_ts = (
-                            _t1_q[_t1_q["company_name"] == cname][["_plabel", "cash_flow_date", _t1_resolved_col]]
+                            _t1_q[_t1_q["company_name"] == cname]
+                            [["_plabel", "cash_flow_date", _t1_resolved_col]]
                             .dropna(subset=[_t1_resolved_col])
                             .sort_values("cash_flow_date")
                             .copy()
                         )
                         if _co_ts.empty:
                             continue
-                        _co_ts["_prev"] = _co_ts[_t1_resolved_col].shift(1)
-                        _co_ts["_chg"] = (
-                            (_co_ts[_t1_resolved_col] - _co_ts["_prev"]) / _co_ts["_prev"].abs()
-                        ).where(_co_ts["_prev"].notna() & (_co_ts["_prev"] != 0))
-
-                        _clr = _combo_colors[ci % len(_combo_colors)]
-
-                        # Bars — absolute value
-                        _fig_combo.add_trace(
-                            go.Bar(
-                                x=_co_ts["_plabel"],
-                                y=_co_ts[_t1_resolved_col],
-                                name=cname,
-                                marker_color=_clr,
-                                opacity=0.75,
-                                legendgroup=cname,
-                                showlegend=True,
+                        _fig_line.add_trace(go.Scatter(
+                            x=_co_ts["_plabel"],
+                            y=_co_ts[_t1_resolved_col],
+                            name=cname,
+                            mode="lines+markers",
+                            line=dict(
+                                color=COMPANY_COLORS[ci % len(COMPANY_COLORS)],
+                                width=2,
+                                dash=_DASH_PATTERNS[ci % len(_DASH_PATTERNS)],
                             ),
-                            secondary_y=False,
-                        )
-                        # Line — Δ%
-                        _fig_combo.add_trace(
-                            go.Scatter(
-                                x=_co_ts["_plabel"],
-                                y=_co_ts["_chg"],
-                                name=f"{cname} Δ%",
-                                mode="lines+markers",
-                                line=dict(color=_clr, width=1.5, dash="dot"),
-                                marker=dict(size=4),
-                                legendgroup=cname,
-                                showlegend=False,
+                            marker=dict(
+                                size=6,
+                                symbol=_MARKER_SYMBOLS[ci % len(_MARKER_SYMBOLS)],
                             ),
-                            secondary_y=True,
-                        )
-
-                    # Y-axis format depends on metric type
+                        ))
                     _y_fmt = ".0%" if _t1_is_pct else ",.0f"
-                    _fig_combo.update_yaxes(
-                        tickformat=_y_fmt, gridcolor=BORDER, secondary_y=False,
-                        title_text=_t1_sel, title_font=dict(size=10, color=SLATE)
-                    )
-                    _fig_combo.update_yaxes(
-                        tickformat=".0%", secondary_y=True,
-                        title_text="Δ% vs Prior", title_font=dict(size=10, color=SLATE),
-                        zeroline=True, zerolinecolor=BORDER, zerolinewidth=1,
-                    )
-                    _fig_combo.update_layout(
-                        height=380,
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
+                    _fig_line.update_layout(
+                        height=420, plot_bgcolor="white", paper_bgcolor="white",
                         margin=dict(l=0, r=0, t=10, b=0),
-                        barmode="group",
                         font=dict(family="Arial", color=NAVY, size=10),
-                        legend=dict(orientation="h", y=-0.22, font=dict(size=9)),
-                        xaxis=dict(tickangle=-45, gridcolor=BORDER),
+                        legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
+                        xaxis=dict(tickangle=-45, tickmode="linear", dtick=1,
+                                   tickfont=dict(size=9), gridcolor=BORDER),
+                        yaxis=dict(tickformat=_y_fmt, gridcolor=BORDER),
                     )
-                    st.plotly_chart(_fig_combo, use_container_width=True)
-                else:
-                    st.info(f"Column for {_t1_sel} not available in period data.")
+                    st.plotly_chart(_fig_line, use_container_width=True)
+
+            elif _t1_sel in _GROUPED_BAR_METRICS and not _t1_q.empty and _t1_src == "q":
+                _t1_resolved_col = None
+                for try_col in [f"ltm_{_t1_col}", _t1_col]:
+                    if try_col in _t1_q.columns:
+                        _t1_resolved_col = try_col
+                        break
+                if _t1_resolved_col:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(f'<div class="section-header">{_t1_sel} — by Company & Period</div>',
+                                unsafe_allow_html=True)
+                    _fig_gb = go.Figure()
+                    for ci, cname in enumerate(_t1_companies):
+                        _co_ts = (
+                            _t1_q[_t1_q["company_name"] == cname]
+                            [["_plabel", "cash_flow_date", _t1_resolved_col]]
+                            .dropna(subset=[_t1_resolved_col])
+                            .sort_values("cash_flow_date").copy()
+                        )
+                        if _co_ts.empty: continue
+                        _fig_gb.add_trace(go.Bar(
+                            x=_co_ts["_plabel"], y=_co_ts[_t1_resolved_col],
+                            name=cname,
+                            marker_color=COMPANY_COLORS[ci % len(COMPANY_COLORS)],
+                        ))
+                    _fig_gb.update_layout(
+                        height=400, barmode="group", plot_bgcolor="white",
+                        paper_bgcolor="white", margin=dict(l=0, r=0, t=10, b=0),
+                        font=dict(family="Arial", color=NAVY, size=10),
+                        legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
+                        xaxis=dict(tickangle=-45, tickfont=dict(size=9), gridcolor=BORDER),
+                        yaxis=dict(tickformat=",.2f", gridcolor=BORDER),
+                    )
+                    st.plotly_chart(_fig_gb, use_container_width=True)
+
+            elif _t1_sel in _STACKED_BAR_METRICS and not _t1_q.empty and _t1_src == "q":
+                _t1_resolved_col = None
+                for try_col in [f"ltm_{_t1_col}", _t1_col]:
+                    if try_col in _t1_q.columns:
+                        _t1_resolved_col = try_col
+                        break
+                if _t1_resolved_col:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(f'<div class="section-header">{_t1_sel} — Stacked by Company</div>',
+                                unsafe_allow_html=True)
+                    _fig_sb = go.Figure()
+                    for ci, cname in enumerate(_t1_companies):
+                        _co_ts = (
+                            _t1_q[_t1_q["company_name"] == cname]
+                            [["_plabel", "cash_flow_date", _t1_resolved_col]]
+                            .dropna(subset=[_t1_resolved_col])
+                            .sort_values("cash_flow_date").copy()
+                        )
+                        if _co_ts.empty: continue
+                        _fig_sb.add_trace(go.Bar(
+                            x=_co_ts["_plabel"], y=_co_ts[_t1_resolved_col],
+                            name=cname,
+                            marker_color=COMPANY_COLORS[ci % len(COMPANY_COLORS)],
+                        ))
+                    _fig_sb.update_layout(
+                        height=400, barmode="stack", plot_bgcolor="white",
+                        paper_bgcolor="white", margin=dict(l=0, r=0, t=10, b=0),
+                        font=dict(family="Arial", color=NAVY, size=10),
+                        legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
+                        xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+                        yaxis=dict(tickformat="$,.0f", gridcolor=BORDER),
+                    )
+                    st.plotly_chart(_fig_sb, use_container_width=True)
+
+            elif _t1_sel in _STATIC_BAR_METRICS and _t1_src == "fs":
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(f'<div class="section-header">{_t1_sel} — at Entry (Static)</div>',
+                            unsafe_allow_html=True)
+                _static_data = []
+                for cname in _t1_companies:
+                    v = _t1_get_val(cname, _t1_display_periods[-1] if _t1_display_periods else None)
+                    if v is not None:
+                        _static_data.append({"company": cname, "value": v})
+                if _static_data:
+                    _sdf = pd.DataFrame(_static_data).sort_values("value")
+                    _fig_st = go.Figure(go.Bar(
+                        x=_sdf["value"], y=_sdf["company"], orientation="h",
+                        marker_color=NAVY,
+                        text=_sdf["value"].apply(_t1_fmt), textposition="outside",
+                    ))
+                    _fig_st.update_layout(
+                        height=max(300, len(_static_data) * 30 + 60),
+                        plot_bgcolor="white", paper_bgcolor="white",
+                        margin=dict(l=0, r=80, t=10, b=0),
+                        font=dict(family="Arial", color=NAVY, size=10),
+                        xaxis=dict(gridcolor=BORDER),
+                    )
+                    st.plotly_chart(_fig_st, use_container_width=True)
+
+            elif _t1_sel in _DUMBBELL_METRICS and _t1_src == "fs":
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(f'<div class="section-header">{_t1_sel} — Entry vs. Current</div>',
+                            unsafe_allow_html=True)
+                # Map to entry equivalent column
+                _entry_col_map = {
+                    "Current TEV / EBITDA":    "entry_tev_to_ebitda",
+                    "Entry TEV / EBITDA":      "entry_tev_to_ebitda",
+                    "Current TEV / Net Sales": "entry_tev_to_revenue",
+                    "Entry TEV / Net Sales":   "entry_tev_to_revenue",
+                }
+                _curr_col_map = {
+                    "Current TEV / EBITDA":    "tev_to_ebitda",
+                    "Entry TEV / EBITDA":      "tev_to_ebitda",
+                    "Current TEV / Net Sales": "tev_to_revenue",
+                    "Entry TEV / Net Sales":   "tev_to_revenue",
+                }
+                _ec = _entry_col_map.get(_t1_sel)
+                _cc = _curr_col_map.get(_t1_sel)
+                if _ec and _cc:
+                    _db_rows = []
+                    for cname in _t1_companies:
+                        fsub = fs_filtered[fs_filtered["company_name"] == cname]
+                        if fsub.empty: continue
+                        ev = fsub.iloc[0].get(_ec)
+                        cv = fsub.iloc[0].get(_cc)
+                        if pd.notna(ev) and pd.notna(cv):
+                            _db_rows.append({"company": cname, "entry": float(ev), "current": float(cv)})
+                    if _db_rows:
+                        _dbdf = pd.DataFrame(_db_rows).sort_values("current")
+                        _fig_db = go.Figure()
+                        for _, r in _dbdf.iterrows():
+                            _fig_db.add_trace(go.Scatter(
+                                x=[r["entry"], r["current"]], y=[r["company"], r["company"]],
+                                mode="lines", line=dict(color=BORDER, width=3),
+                                showlegend=False,
+                            ))
+                        _fig_db.add_trace(go.Scatter(
+                            x=_dbdf["entry"], y=_dbdf["company"],
+                            mode="markers", name="Entry",
+                            marker=dict(color=SLATE, size=12, symbol="circle"),
+                        ))
+                        _fig_db.add_trace(go.Scatter(
+                            x=_dbdf["current"], y=_dbdf["company"],
+                            mode="markers", name="Current",
+                            marker=dict(color=NAVY, size=12, symbol="circle"),
+                        ))
+                        _fig_db.update_layout(
+                            height=max(300, len(_db_rows) * 35 + 80),
+                            plot_bgcolor="white", paper_bgcolor="white",
+                            margin=dict(l=0, r=0, t=10, b=0),
+                            font=dict(family="Arial", color=NAVY, size=10),
+                            xaxis=dict(tickformat=",.1f", ticksuffix="x", gridcolor=BORDER),
+                            legend=dict(orientation="h", y=-0.15),
+                        )
+                        st.plotly_chart(_fig_db, use_container_width=True)
+
+            elif _t1_sel in _HORIZ_BAR_METRICS and _t1_src == "fs":
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(f'<div class="section-header">{_t1_sel} — Ranked</div>',
+                            unsafe_allow_html=True)
+                _hr_data = []
+                for cname in _t1_companies:
+                    fsub = fs_filtered[fs_filtered["company_name"] == cname]
+                    if fsub.empty or _t1_col not in fsub.columns: continue
+                    v = fsub.iloc[0][_t1_col]
+                    if pd.notna(v):
+                        _hr_data.append({"company": cname, "value": float(v)})
+                if _hr_data:
+                    _hrdf = pd.DataFrame(_hr_data).sort_values("value")
+                    _fig_hr = go.Figure(go.Bar(
+                        x=_hrdf["value"], y=_hrdf["company"], orientation="h",
+                        marker_color=[SEA_GREEN if v >= 2.0 else XANTHOUS if v >= 1.0 else RED_FLAG
+                                      for v in _hrdf["value"]],
+                        text=_hrdf["value"].apply(_t1_fmt), textposition="outside",
+                    ))
+                    _fig_hr.update_layout(
+                        height=max(300, len(_hr_data) * 30 + 60),
+                        plot_bgcolor="white", paper_bgcolor="white",
+                        margin=dict(l=0, r=80, t=10, b=0),
+                        font=dict(family="Arial", color=NAVY, size=10),
+                        xaxis=dict(gridcolor=BORDER),
+                    )
+                    st.plotly_chart(_fig_hr, use_container_width=True)
+
             elif _t1_src in ("fs", "flags"):
                 st.info("This metric is a point-in-time value — period trend chart not available.")
+            else:
+                st.info(f"Chart not available for {_t1_sel}.")
 
         else:
             st.info("No data available for the selected metric and filter.")
@@ -2004,8 +2173,22 @@ def page_portfolio_overview():
             except Exception:
                 inv_year = "—"
 
+            # Build flag detail tooltip
+            _flag_details = []
+            _flag_map = {
+                "revenue_growth_flag":    ("Rev Growth",    format_pct(row.get("revenue_yoy"))),
+                "ebitda_margin_flag":     ("EBITDA Margin", format_pct(row.get("ltm_adj_ebitda_margin"))),
+                "net_leverage_flag":      ("Net Leverage",  format_multiple(row.get("net_leverage"))),
+                "interest_coverage_flag": ("Int. Coverage", format_multiple(row.get("interest_coverage"))),
+            }
+            for fk, (flbl, fval) in _flag_map.items():
+                fstatus = row.get(fk, "")
+                if fstatus in ("Red", "Yellow"):
+                    _flag_details.append(f"{fstatus} — {flbl}: {fval}")
+            _tooltip = " | ".join(_flag_details) if _flag_details else "No alerts triggered"
+
             col.markdown(f"""
-            <div class="company-card">
+            <div class="company-card" title="{_tooltip}" style="cursor:help;">
                 <div style="display:flex; justify-content:space-between; align-items:start;">
                     <div>
                         <div class="company-name">{cname}</div>
@@ -2027,6 +2210,7 @@ def page_portfolio_overview():
                         {yoy_str}</span><br>
                         <span style="font-size:10px;color:{SLATE};">Rev Growth</span></div>
                 </div>
+                {f'<div style="margin-top:8px;font-size:9px;color:{RED_FLAG};font-family:Arial;">⚠ {_tooltip}</div>' if _flag_details else ''}
             </div>
             """, unsafe_allow_html=True)
 
@@ -2204,41 +2388,92 @@ def page_company_detail():
         st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
                     unsafe_allow_html=True)
 
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Bar(
-            x=quarterly["period_label"],
-            y=quarterly["revenue"].combine_first(quarterly["net_sales"]),
-            name="Revenue ($M)", marker_color=NAVY, opacity=0.8
-        ), secondary_y=False)
-        fig.add_trace(go.Bar(
-            x=quarterly["period_label"],
-            y=quarterly["adj_ebitda"],
-            name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8
-        ), secondary_y=False)
-        margin = quarterly["adj_ebitda"] / quarterly["revenue"].replace(0, float("nan"))
-        fig.add_trace(go.Scatter(
-            x=quarterly["period_label"], y=margin,
-            name="EBITDA Margin %", mode="lines+markers",
-            line=dict(color=XANTHOUS, width=2), marker=dict(size=5)
-        ), secondary_y=True)
-        fig.update_layout(
-            height=300, plot_bgcolor="white", paper_bgcolor="white",
-            margin=dict(l=0, r=0, t=10, b=0), barmode="group",
-            legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
-            font=dict(family="Arial", color=NAVY, size=10)
-        )
-        fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
-        fig.update_yaxes(tickformat=".0%", secondary_y=True)
-        fig.update_xaxes(tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
+        # Period mode selector for company overview charts
+        _co_ov_period_col, _co_ov_range_col, _ = st.columns([2, 3, 3])
+        with _co_ov_period_col:
+            _co_ov_mode = st.radio(
+                "Period",
+                ["Monthly", "Quarterly"],
+                horizontal=True,
+                key=f"co_ov_period_{selected}",
+                label_visibility="collapsed",
+            )
+        # Filter to the selected period type only
+        _ov_period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly"}
+        if "period" in quarterly.columns:
+            quarterly_ov = quarterly[quarterly["period"] == _ov_period_map[_co_ov_mode]].copy()
+        else:
+            quarterly_ov = quarterly.copy()
+        quarterly_ov["cash_flow_date"] = pd.to_datetime(quarterly_ov["cash_flow_date"], errors="coerce")
+        quarterly_ov = quarterly_ov.sort_values("cash_flow_date")
+
+        # Date range — default last 12 months (monthly) or last 24 months (quarterly)
+        _default_months = 12 if _co_ov_mode == "Monthly" else 24
+        _min_date = quarterly_ov["cash_flow_date"].min()
+        _max_date = quarterly_ov["cash_flow_date"].max()
+        _default_start = _max_date - pd.DateOffset(months=_default_months)
+        _default_start = max(_default_start, _min_date)
+
+        with _co_ov_range_col:
+            _date_range = st.date_input(
+                "Date range",
+                value=(_default_start.date(), _max_date.date()),
+                min_value=_min_date.date(),
+                max_value=_max_date.date(),
+                key=f"co_ov_daterange_{selected}",
+                label_visibility="collapsed",
+            )
+
+        if isinstance(_date_range, (list, tuple)) and len(_date_range) == 2:
+            quarterly_ov = quarterly_ov[
+                (quarterly_ov["cash_flow_date"] >= pd.Timestamp(_date_range[0])) &
+                (quarterly_ov["cash_flow_date"] <= pd.Timestamp(_date_range[1]))
+            ]
+
+        if not quarterly_ov.empty:
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            _rev = quarterly_ov["revenue"].combine_first(quarterly_ov["net_sales"])
+            fig.add_trace(go.Bar(
+                x=quarterly_ov["period_label"],
+                y=_rev,
+                name="Revenue ($M)", marker_color=NAVY, opacity=0.8
+            ), secondary_y=False)
+            fig.add_trace(go.Bar(
+                x=quarterly_ov["period_label"],
+                y=quarterly_ov["adj_ebitda"],
+                name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8
+            ), secondary_y=False)
+            # Connect margin line — drop NaN so line is continuous
+            _margin_df = quarterly_ov[["period_label", "adj_ebitda"]].copy()
+            _margin_df["_rev"] = _rev.values
+            _margin_df["margin"] = _margin_df["adj_ebitda"] / _margin_df["_rev"].replace(0, float("nan"))
+            _margin_df = _margin_df.dropna(subset=["margin"])
+            fig.add_trace(go.Scatter(
+                x=_margin_df["period_label"], y=_margin_df["margin"],
+                name="EBITDA Margin %", mode="lines+markers",
+                line=dict(color=XANTHOUS, width=2), marker=dict(size=5),
+                connectgaps=True,
+            ), secondary_y=True)
+            fig.update_layout(
+                height=420, plot_bgcolor="white", paper_bgcolor="white",
+                margin=dict(l=0, r=0, t=10, b=0), barmode="group",
+                legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+                font=dict(family="Arial", color=NAVY, size=10)
+            )
+            fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
+            fig.update_yaxes(tickformat=".0%", secondary_y=True)
+            fig.update_xaxes(tickangle=-45, tickmode="linear", dtick=1, tickfont=dict(size=9))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(f"No {_co_ov_mode} data available for this company in the selected date range.")
 
         # Net Leverage trend
         col_lev, col_margin = st.columns(2)
 
         with col_lev:
-            st.markdown('<div class="section-header">Net Leverage — Quarterly</div>',
+            st.markdown(f'<div class="section-header">Net Leverage — {_co_ov_mode}</div>',
                         unsafe_allow_html=True)
-            lev_df = quarterly.dropna(subset=["net_leverage"])
+            lev_df = quarterly_ov.dropna(subset=["net_leverage"])
             if not lev_df.empty:
                 fig3 = go.Figure()
                 fig3.add_hline(y=6.0, line_dash="dash", line_color=RED_FLAG,
@@ -2251,18 +2486,19 @@ def page_company_detail():
                                   for v in lev_df["net_leverage"]]
                 ))
                 fig3.update_layout(
-                    height=240, plot_bgcolor="white", paper_bgcolor="white",
+                    height=340, plot_bgcolor="white", paper_bgcolor="white",
                     margin=dict(l=0, r=0, t=10, b=0),
                     font=dict(family="Arial", color=NAVY, size=10),
                     yaxis=dict(title="Net Leverage (x)", gridcolor=BORDER)
                 )
-                fig3.update_xaxes(tickangle=-45)
+                fig3.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                                  tickfont=dict(size=8))
                 st.plotly_chart(fig3, use_container_width=True)
 
         with col_margin:
-            st.markdown('<div class="section-header">EBITDA Margin % — Quarterly</div>',
+            st.markdown(f'<div class="section-header">EBITDA Margin % — {_co_ov_mode}</div>',
                         unsafe_allow_html=True)
-            mgn_df = quarterly.dropna(subset=["adj_ebitda_margin_pct"])
+            mgn_df = quarterly_ov.dropna(subset=["adj_ebitda_margin_pct"])
             if not mgn_df.empty:
                 fig4 = go.Figure()
                 fig4.add_hline(y=0.18, line_dash="dash", line_color=SEA_GREEN,
@@ -2273,15 +2509,17 @@ def page_company_detail():
                     x=mgn_df["period_label"], y=mgn_df["adj_ebitda_margin_pct"],
                     mode="lines+markers",
                     line=dict(color=SLATE, width=2),
-                    fill="tozeroy", fillcolor=f"rgba(63,102,128,0.1)"
+                    fill="tozeroy", fillcolor="rgba(63,102,128,0.1)",
+                    connectgaps=True,
                 ))
                 fig4.update_layout(
-                    height=240, plot_bgcolor="white", paper_bgcolor="white",
+                    height=340, plot_bgcolor="white", paper_bgcolor="white",
                     margin=dict(l=0, r=0, t=10, b=0),
                     font=dict(family="Arial", color=NAVY, size=10),
                     yaxis=dict(tickformat=".0%", gridcolor=BORDER)
                 )
-                fig4.update_xaxes(tickangle=-45)
+                fig4.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                                  tickfont=dict(size=8))
                 st.plotly_chart(fig4, use_container_width=True)
 
     # AI chat for this company
