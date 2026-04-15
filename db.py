@@ -186,19 +186,34 @@ def load_consumer_kpis() -> pd.DataFrame:
     df = load_quarterly_all()
     if df.empty:
         return pd.DataFrame()
-    kpi_cols = ["revenue", "adj_ebitda", "net_leverage",
-                "interest_coverage", "gross_margin_pct", "adj_ebitda_margin_pct"]
+    # Only quarterly period for KPI snapshots
+    if "period" in df.columns:
+        df = df[df["period"] == "Quarterly"]
+    # Datasheet column names — map to display labels
+    kpi_col_map = {
+        "revenue":                  "LTM Net Sales (Actual) (Datasheet)",
+        "adj_ebitda":               "LTM Adj. EBITDA (Datasheet)",
+        "net_leverage":             "Net Debt / EBITDA (Datasheet)",
+        "interest_coverage":        "Interest Coverage Ratio (Datasheet)",
+        "adj_ebitda_margin_pct":    "EBITDA Margin (Datasheet)",
+        "ltm_free_cash_flow":       "LTM Free Cash Flow (Datasheet)",
+        "total_gross_debt":         "Total Gross Debt (Datasheet)",
+        "net_debt":                 "Net Debt (Actual) (Datasheet)",
+        "tev":                      "TEV (Actual) (Datasheet)",
+        "gross_moi":                "Gross MOI (Datasheet)",
+        "gross_irr":                "Gross IRR (Datasheet)",
+    }
     rows = []
-    for col in [c for c in kpi_cols if c in df.columns]:
+    for col, display_name in kpi_col_map.items():
+        if col not in df.columns:
+            continue
         latest = (df.sort_values("cash_flow_date")
                     .groupby("company_name").last().reset_index())
-        sub = latest[["company_name", "cash_flow_date", col]].dropna(subset=[col])
-        sub = sub.copy()
-        sub["attribute_name"] = col.replace("_", " ").title()
+        sub = latest[["company_name", "cash_flow_date", col]].dropna(subset=[col]).copy()
+        sub["attribute_name"] = display_name
         sub["true_up_value"]  = sub[col]
         sub["tag"]            = "KPI"
-        rows.append(sub[["company_name", "attribute_name",
-                          "cash_flow_date", "true_up_value"]])
+        rows.append(sub[["company_name", "attribute_name", "cash_flow_date", "true_up_value"]])
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 def get_company_list() -> list:

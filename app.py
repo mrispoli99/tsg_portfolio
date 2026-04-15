@@ -628,7 +628,12 @@ def page_portfolio_overview():
                                          int(max(years)) if years else 2024),
                                   key="po_year") if years else None
         with fc4:
-            po_funds = sorted(fs["funds"].dropna().unique().tolist())                        if not fs.empty and "funds" in fs.columns else []
+            po_funds = sorted(fs["funds"].dropna().unique().tolist()) \
+                       if not fs.empty and "funds" in fs.columns else []
+            _po_has_null_funds = (not fs.empty and "funds" in fs.columns
+                                  and fs["funds"].isna().any())
+            if _po_has_null_funds:
+                po_funds = po_funds + ["(No Fund)"]
             sel_funds_po = st.multiselect("Fund", po_funds, default=po_funds,
                                            key="po_fund") if po_funds else []
         with fc5:
@@ -648,7 +653,12 @@ def page_portfolio_overview():
     if yr_range and "_inv_year" in fs_filtered.columns:
         fs_filtered = fs_filtered[fs_filtered["_inv_year"].between(yr_range[0], yr_range[1])]
     if sel_funds_po and "funds" in fs_filtered.columns:
-        fs_filtered = fs_filtered[fs_filtered["funds"].isin(sel_funds_po)]
+        _include_null = "(No Fund)" in sel_funds_po
+        _named = [f for f in sel_funds_po if f != "(No Fund)"]
+        fs_filtered = fs_filtered[
+            fs_filtered["funds"].isin(_named) |
+            (fs_filtered["funds"].isna() if _include_null else False)
+        ]
 
     filtered_names = fs_filtered["company_name"].tolist()
     q_filt = quarterly[quarterly["company_name"].isin(filtered_names)] \
@@ -927,43 +937,46 @@ def page_portfolio_overview():
 
         # Build the same ALL_METRIC_DEFS here so tab 1 is self-contained
         _T1_METRIC_DEFS = [
-            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False),
-            ("Current TEV",             "current_tev",              "fs",    format_millions, False),
-            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False),
-            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False),
-            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False),
-            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True),
-            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False),
-            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False),
-            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False),
-            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False),
-            ("Entry TEV",               "entry_tev",                "fs",    format_millions, False),
-            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False),
-            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False),
-            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False),
-            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True),
-            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False),
-            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True),
-            ("Gross Profit",            "gross_profit",             "q",     format_millions, False),
-            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False),
-            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False),
-            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False),
-            ("LTM Cash Interest (Gross)","cash_interest_expense",   "q",     format_millions, False),
-            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False),
-            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False),
-            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False),
-            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False),
-            ("LTM Net Sales",           "ltm_revenue",              "q",     format_millions, False),
-            ("LTM Revenue",             "ltm_revenue",              "q",     format_millions, False),
-            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False),
-            ("Net Debt",                "net_debt",                 "q",     format_millions, False),
-            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False),
-            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True),
-            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False),
-            ("Total Cost",              "entry_tev",                "fs",    format_millions, False),
-            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False),
-            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False),
-            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False),
+            # label,                    col (matches Datasheet view),  src,    fmt,             is_pct
+            ("Cash",                    "cash",                         "q",     format_millions, False),
+            ("Current Net Debt / EBITDA","net_leverage",               "q",     format_multiple, False),
+            ("Current TEV",             "current_tev",                  "fs",    format_millions, False),
+            ("Current TEV / EBITDA",    "tev_to_ebitda",                "fs",    format_multiple, False),
+            ("Current TEV / Net Sales", "tev_to_revenue",               "fs",    format_multiple, False),
+            ("Debt Service Coverage",   "debt_service_coverage",        "q",     format_multiple, False),
+            ("EBITDA Margin",           "adj_ebitda_margin_pct",        "q",     format_pct,      True),
+            ("Entry TEV",               "entry_tev",                    "fs",    format_millions, False),
+            ("Floating Rate Debt",      "floating_rate_debt",           "q",     format_millions, False),
+            ("Fixed Rate Debt",         "fixed_rate_debt",              "q",     format_millions, False),
+            ("Fund Current Ownership",  "fund_current_ownership",       "q",     format_pct,      True),
+            ("Gross IRR",               "gross_irr",                    "q",     format_pct,      True),
+            ("Gross MOI",               "gross_moi",                    "q",     format_multiple, False),
+            ("Interest Coverage",       "interest_coverage",            "q",     format_multiple, False),
+            ("LTM Adj. EBITDA",         "adj_ebitda",                   "q",     format_millions, False),
+            ("LTM Capex (Excl. M&A)",   "ltm_capex",                    "q",     format_millions, False),
+            ("LTM Cash Interest (Gross)","ltm_cash_interest",           "q",     format_millions, False),
+            ("LTM Cash Taxes",          "ltm_cash_taxes",               "q",     format_millions, False),
+            ("LTM Credit Agmt. EBITDA", "ltm_credit_agreement_ebitda",  "q",     format_millions, False),
+            ("LTM Free Cash Flow",      "ltm_free_cash_flow",           "q",     format_millions, False),
+            ("LTM Mandatory Pmts",      "ltm_principal_payments",       "q",     format_millions, False),
+            ("LTM Net Sales",           "revenue",                      "q",     format_millions, False),
+            ("LTM Δ NWC",               "ltm_change_nwc",               "q",     format_millions, False),
+            ("Net Debt",                "net_debt",                     "q",     format_millions, False),
+            ("Net Debt / EBITDA",       "net_leverage",                 "q",     format_multiple, False),
+            ("Net Debt (Credit Agmt.)", "net_debt_credit_agreement",    "q",     format_millions, False),
+            ("PIK Debt",                "pik_debt",                     "q",     format_millions, False),
+            ("Rev Growth (YoY)",        "revenue_yoy",                  "flags", format_pct,      True),
+            ("Senior Secured Leverage", "senior_secured_leverage",      "q",     format_multiple, False),
+            ("Senior Secured Portion",  "senior_secured_debt",          "q",     format_millions, False),
+            ("TEV / EBITDA",            "tev_to_ebitda",                "q",     format_multiple, False),
+            ("TEV / Net Sales",         "tev_to_revenue",               "q",     format_multiple, False),
+            ("Total Cost",              "total_cost",                   "q",     format_millions, False),
+            ("Total Gross Debt",        "total_gross_debt",             "q",     format_millions, False),
+            ("Total Gross Leverage",    "gross_leverage",               "q",     format_multiple, False),
+            ("Total Net Leverage",      "total_net_leverage",           "q",     format_multiple, False),
+            ("Total Realized & Unrealized","total_value",               "q",     format_millions, False),
+            ("TSG Controlled Ownership","tsg_current_ownership",        "q",     format_pct,      True),
+            ("Unrealized Value",        "unrealized_value",             "q",     format_millions, False),
         ]
         _t1_metric_labels = sorted([d[0] for d in _T1_METRIC_DEFS])
         _t1_metric_lookup = {d[0]: d for d in _T1_METRIC_DEFS}
@@ -1340,47 +1353,44 @@ def page_portfolio_overview():
         # METRIC DEFINITIONS shared with tab 1 additional charts
         # ----------------------------------------------------------------
         ALL_METRIC_DEFS = [
-            ("Entry TEV",               "entry_tev",               "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            ("Current TEV",             "current_tev",              "fs",    format_millions, False, "LTM Current — $USD"),
-            ("LTM Net Sales",           "ltm_revenue",              "q",     format_millions, False, "LTM Current — $USD"),
-            ("LTM EBITDA",              "ltm_adj_ebitda",           "q",     format_millions, False, "LTM Current — $USD"),
-            ("Current Net Debt",        "net_debt",                 "q",     format_millions, False, "LTM Current — $USD"),
-            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False, "LTM Current — Ratios"),
-            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False, "LTM Current — Ratios"),
-            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False, "LTM Current — Ratios"),
-            ("Total Cost",              "entry_tev",                "fs",    format_millions, False, "Valuation"),
-            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False, "Valuation"),
-            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True,  "Valuation"),
-            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False, "Credit Agreement"),
-            ("Fixed Rate Debt",         "fixed_rate_debt",          "q",     format_millions, False, "Credit Agreement"),
-            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False, "Credit Agreement"),
-            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False, "Credit Agreement"),
-            ("Cash",                    "cash",                     "q",     format_millions, False, "Credit Agreement"),
-            ("Net Debt",                "net_debt",                 "q",     format_millions, False, "Credit Agreement"),
-            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Cash Interest (Gross)","cash_interest_expense",   "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False, "Debt Ratios"),
-            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False, "Debt Ratios"),
-            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False, "Debt Ratios"),
-            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False, "Debt Ratios"),
-            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False, "Debt Ratios"),
-            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False, "Debt Ratios"),
-            ("LTM Revenue",             "ltm_revenue",              "q",     format_millions, False, "Operating"),
-            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True,  "Operating"),
-            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True,  "Operating"),
-            ("Gross Profit",            "gross_profit",             "q",     format_millions, False, "Operating"),
-            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True,  "Operating"),
+            ("Entry TEV",               "entry_tev",                    "fs",    format_millions, False, "LTM at Entry — $USD"),
+            ("Current TEV",             "current_tev",                  "fs",    format_millions, False, "LTM Current — $USD"),
+            ("LTM Net Sales",           "revenue",                      "q",     format_millions, False, "LTM Current — $USD"),
+            ("LTM Adj. EBITDA",         "adj_ebitda",                   "q",     format_millions, False, "LTM Current — $USD"),
+            ("Current Net Debt",        "net_debt",                     "q",     format_millions, False, "LTM Current — $USD"),
+            ("Current TEV / Net Sales", "tev_to_revenue",               "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current TEV / EBITDA",    "tev_to_ebitda",                "fs",    format_multiple, False, "LTM Current — Ratios"),
+            ("Current Net Debt / EBITDA","net_leverage",                "q",     format_multiple, False, "LTM Current — Ratios"),
+            ("Gross MOI",               "gross_moi",                    "q",     format_multiple, False, "Valuation"),
+            ("Gross IRR",               "gross_irr",                    "q",     format_pct,      True,  "Valuation"),
+            ("Total Cost",              "total_cost",                   "q",     format_millions, False, "Valuation"),
+            ("Unrealized Value",        "unrealized_value",             "q",     format_millions, False, "Valuation"),
+            ("Realized Proceeds",       "realized_proceeds",            "q",     format_millions, False, "Valuation"),
+            ("Total Realized & Unrealized","total_value",               "q",     format_millions, False, "Valuation"),
+            ("Floating Rate Debt",      "floating_rate_debt",           "q",     format_millions, False, "Credit Agreement"),
+            ("Fixed Rate Debt",         "fixed_rate_debt",              "q",     format_millions, False, "Credit Agreement"),
+            ("PIK Debt",                "pik_debt",                     "q",     format_millions, False, "Credit Agreement"),
+            ("Total Gross Debt",        "total_gross_debt",             "q",     format_millions, False, "Credit Agreement"),
+            ("Senior Secured Portion",  "senior_secured_debt",          "q",     format_millions, False, "Credit Agreement"),
+            ("Cash",                    "cash",                         "q",     format_millions, False, "Credit Agreement"),
+            ("Net Debt",                "net_debt",                     "q",     format_millions, False, "Credit Agreement"),
+            ("Net Debt (Credit Agmt.)", "net_debt_credit_agreement",    "q",     format_millions, False, "Credit Agreement"),
+            ("LTM Credit Agmt. EBITDA", "ltm_credit_agreement_ebitda",  "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Interest (Gross)","ltm_cash_interest",           "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Capex (Excl. M&A)",   "ltm_capex",                    "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Δ NWC",               "ltm_change_nwc",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Cash Taxes",          "ltm_cash_taxes",               "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("LTM Mandatory Pmts",      "ltm_principal_payments",       "q",     format_millions, False, "Debt Ratio Inputs"),
+            ("Total Net Leverage",      "total_net_leverage",           "q",     format_multiple, False, "Debt Ratios"),
+            ("Total Gross Leverage",    "gross_leverage",               "q",     format_multiple, False, "Debt Ratios"),
+            ("Senior Secured Leverage", "senior_secured_leverage",      "q",     format_multiple, False, "Debt Ratios"),
+            ("Interest Coverage",       "interest_coverage",            "q",     format_multiple, False, "Debt Ratios"),
+            ("Debt Service Coverage",   "debt_service_coverage",        "q",     format_multiple, False, "Debt Ratios"),
+            ("LTM Free Cash Flow",      "ltm_free_cash_flow",           "q",     format_millions, False, "Debt Ratios"),
+            ("Rev Growth (YoY)",        "revenue_yoy",                  "flags", format_pct,      True,  "Operating"),
+            ("EBITDA Margin",           "adj_ebitda_margin_pct",        "q",     format_pct,      True,  "Operating"),
+            ("Fund Current Ownership",  "fund_current_ownership",       "q",     format_pct,      True,  "Operating"),
+            ("TSG Controlled Ownership","tsg_current_ownership",        "q",     format_pct,      True,  "Operating"),
         ]
 
         metric_labels   = [d[0] for d in ALL_METRIC_DEFS]
@@ -1560,8 +1570,8 @@ def page_portfolio_overview():
                 v = sub.iloc[0][col]
                 return None if pd.isna(v) else v
 
-        # Resolve actual column to use for chart (prefer ltm_ prefixed)
-        _m_actual_col = f"ltm_{m_col}" if (not q_prep.empty and f"ltm_{m_col}" in q_prep.columns) else m_col
+        # Resolve actual column to use for chart
+        _m_actual_col = m_col
 
         if m_src == "q" and not q_prep.empty and _m_actual_col in q_prep.columns:
             kpi_ts = q_prep[["company_name", "_plabel", "cash_flow_date", _m_actual_col]].dropna(subset=[_m_actual_col]).copy()
@@ -1618,56 +1628,6 @@ def page_portfolio_overview():
                 )
                 st.plotly_chart(fig_fs, use_container_width=True)
                 st.caption(f"{active_metric} — latest snapshot (static, no time series).")
-            # --- LTM at Entry — Fund Currency ($USD) ---
-            ("Entry TEV",               "entry_tev",               "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry Net Sales",         "entry_revenue",            "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry EBITDA",            "entry_adj_ebitda",         "fs",    format_millions, False, "LTM at Entry — $USD"),
-            ("Entry Net Debt",          "entry_net_debt",           "fs",    format_millions, False, "LTM at Entry — $USD"),
-            # --- LTM at Entry — Ratios ---
-            ("Entry TEV / Net Sales",   "entry_tev_to_revenue",     "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            ("Entry TEV / EBITDA",      "entry_tev_to_ebitda",      "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            ("Entry Net Debt / EBITDA", "entry_net_leverage",       "fs",    format_multiple, False, "LTM at Entry — Ratios"),
-            # --- Exit / LTM Current — Fund Currency ($USD) ---
-            ("Current TEV",             "current_tev",              "fs",    format_millions, False, "LTM Current — $USD"),
-            ("LTM Net Sales",           "ltm_revenue",              "q",     format_millions, False, "LTM Current — $USD"),
-            ("LTM EBITDA",              "ltm_adj_ebitda",           "q",     format_millions, False, "LTM Current — $USD"),
-            ("Current Net Debt",        "net_debt",                 "q",     format_millions, False, "LTM Current — $USD"),
-            # --- Exit / LTM Current — Ratios ---
-            ("Current TEV / Net Sales", "tev_to_revenue",           "fs",    format_multiple, False, "LTM Current — Ratios"),
-            ("Current TEV / EBITDA",    "tev_to_ebitda",            "fs",    format_multiple, False, "LTM Current — Ratios"),
-            ("Current Net Debt / EBITDA","net_leverage",            "q",     format_multiple, False, "LTM Current — Ratios"),
-            # --- Valuation ---
-            ("Total Cost",              "entry_tev",                "fs",    format_millions, False, "Valuation"),
-            ("Gross MOI",               "gross_moi",                "fs",    format_multiple, False, "Valuation"),
-            ("Gross IRR",               "gross_irr",                "fs",    format_pct,      True,  "Valuation"),
-            # --- Credit Agreement — Total Outstanding Debt ---
-            ("Floating Rate Debt",      "floating_rate_debt",       "q",     format_millions, False, "Credit Agreement"),
-            ("Fixed Rate Debt",         "fixed_rate_debt",          "q",     format_millions, False, "Credit Agreement"),
-            ("PIK Debt",                "pik_debt",                 "q",     format_millions, False, "Credit Agreement"),
-            ("Total Gross Debt",        "total_gross_debt",         "q",     format_millions, False, "Credit Agreement"),
-            ("Cash",                    "cash",                     "q",     format_millions, False, "Credit Agreement"),
-            ("Net Debt",                "net_debt",                 "q",     format_millions, False, "Credit Agreement"),
-            # --- Relevant Info for Debt Ratios ---
-            ("LTM Credit Agmt. EBITDA", "credit_agreement_ebitda",  "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Adj. EBITDA",         "adj_ebitda",               "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Cash Interest (Gross)","cash_interest_expense",    "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Capex (Excl. M&A)",   "capex",                    "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Δ NWC",               "change_in_nwc",            "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Cash Taxes",          "cash_taxes",               "q",     format_millions, False, "Debt Ratio Inputs"),
-            ("LTM Mandatory Pmts",      "mandatory_principal",      "q",     format_millions, False, "Debt Ratio Inputs"),
-            # --- Debt Ratios & Metrics ---
-            ("Total Net Leverage",      "net_leverage",             "q",     format_multiple, False, "Debt Ratios"),
-            ("Total Gross Leverage",    "gross_leverage",           "q",     format_multiple, False, "Debt Ratios"),
-            ("Sr. Secured Leverage",    "senior_secured_leverage",  "q",     format_multiple, False, "Debt Ratios"),
-            ("Interest Coverage",       "interest_coverage",        "q",     format_multiple, False, "Debt Ratios"),
-            ("Debt Service Coverage",   "debt_service_coverage",    "q",     format_multiple, False, "Debt Ratios"),
-            ("LTM Free Cash Flow",      "free_cash_flow",           "q",     format_millions, False, "Debt Ratios"),
-            # --- Core Operating KPIs (always useful) ---
-            ("LTM Revenue",             "ltm_revenue",              "q",     format_millions, False, "Operating"),
-            ("Rev Growth (YoY)",        "revenue_yoy",              "flags", format_pct,      True,  "Operating"),
-            ("EBITDA Margin",           "adj_ebitda_margin_pct",    "q",     format_pct,      True,  "Operating"),
-            ("Gross Profit",            "gross_profit",             "q",     format_millions, False, "Operating"),
-            ("Gross Margin %",          "gross_margin_pct",         "q",     format_pct,      True,  "Operating"),
         # ================================================================
         # ADDITIONAL CHARTS — Tab 2
         # ================================================================
@@ -2592,7 +2552,12 @@ def page_flags_alerts():
                                          int(max(years)) if years else 2024),
                                   key="fa_year") if years else None
         with fc4:
-            all_funds = sorted(fs["funds"].dropna().unique().tolist())                         if not fs.empty and "funds" in fs.columns else []
+            all_funds = sorted(fs["funds"].dropna().unique().tolist()) \
+                        if not fs.empty and "funds" in fs.columns else []
+            _fa_has_null_funds = (not fs.empty and "funds" in fs.columns
+                                  and fs["funds"].isna().any())
+            if _fa_has_null_funds:
+                all_funds = all_funds + ["(No Fund)"]
             sel_funds = st.multiselect("Fund", all_funds, default=all_funds,
                                         key="fa_fund") if all_funds else []
         with fc5:
@@ -2612,7 +2577,12 @@ def page_flags_alerts():
         yc = fs[fs["_inv_year"].between(yr_range[0], yr_range[1])]["company_name"].tolist()
         flags_filtered = flags_filtered[flags_filtered["company_name"].isin(yc)]
     if sel_funds and not fs.empty and "funds" in fs.columns:
-        fc_list = fs[fs["funds"].isin(sel_funds)]["company_name"].tolist()
+        _include_null_fa = "(No Fund)" in sel_funds
+        _named_fa = [f for f in sel_funds if f != "(No Fund)"]
+        fc_list = fs[
+            fs["funds"].isin(_named_fa) |
+            (fs["funds"].isna() if _include_null_fa else False)
+        ]["company_name"].tolist()
         flags_filtered = flags_filtered[flags_filtered["company_name"].isin(fc_list)]
     if not pf_df.empty:
         pf_filtered = pf_df[pf_df["company_name"].isin(flags_filtered["company_name"])]
