@@ -876,8 +876,13 @@ def page_portfolio_overview():
                 # Sort period labels chronologically using cash_flow_date median per label
                 _label_order = (q_chart.groupby("period_label")["cash_flow_date"]
                                 .median().sort_values().index.tolist())
+                # min_count=1 keeps NaN when all values for a period are null,
+                # so dropna removes truly empty periods instead of showing zero bars
                 agg = (q_chart.groupby("period_label")
-                       .agg(revenue=("revenue", "sum"), adj_ebitda=("adj_ebitda", "sum"))
+                       .agg(
+                           revenue    = ("revenue",    lambda x: x.sum(min_count=1)),
+                           adj_ebitda = ("adj_ebitda", lambda x: x.sum(min_count=1)),
+                       )
                        .reindex(_label_order)
                        .reset_index()
                        .dropna(subset=["revenue", "adj_ebitda"], how="all")
@@ -913,7 +918,10 @@ def page_portfolio_overview():
                 fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False,
                                  tickfont=dict(size=11))
                 fig.update_yaxes(tickformat=".0%", secondary_y=True, tickfont=dict(size=11))
-                fig.update_xaxes(tickangle=-45, tickmode="linear", dtick=1,
+                # Only tick the periods that actually have data — avoids empty gaps
+                fig.update_xaxes(tickangle=-45, tickmode="array",
+                                 tickvals=agg["period_label"].tolist(),
+                                 ticktext=agg["period_label"].tolist(),
                                  tickfont=dict(size=10))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -1105,11 +1113,17 @@ def page_portfolio_overview():
                 "Gross Profit", "LTM Free Cash Flow", "LTM Cash Interest (Gross)",
                 "LTM Cash Taxes", "LTM Mandatory Pmts", "LTM Capex (Excl. M&A)",
                 "LTM Δ NWC", "Rev Growth (YoY)", "Gross Margin %", "EBITDA Margin",
+                # Additional time-series metrics
+                "Cash", "Fixed Rate Debt", "Net Debt (Credit Agmt.)", "Senior Secured Portion",
+                "Total Realized & Unrealized", "Unrealized Value",
+                "Fund Current Ownership", "TSG Controlled Ownership",
             }
             _GROUPED_BAR_METRICS = {
                 "Current Net Debt / EBITDA", "Sr. Secured Leverage", "Total Gross Leverage",
                 "Debt Service Coverage", "Interest Coverage", "Total Gross Debt",
                 "Net Debt", "Current TEV", "Total Net Leverage",
+                # Additional ratio metrics
+                "Net Debt / EBITDA", "Senior Secured Leverage", "TEV / EBITDA", "TEV / Net Sales",
             }
             _STACKED_BAR_METRICS = {"Floating Rate Debt", "PIK Debt"}
             _STATIC_BAR_METRICS  = {
