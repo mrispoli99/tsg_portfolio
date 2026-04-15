@@ -473,8 +473,9 @@ def page_company_detail_enhanced():
 
         # Filter all data to selected period type only
         _period_type_map = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
+        _pf_val = _period_type_map.get(co_period_mode, "Quarterly")
         if not quarterly.empty and "period" in quarterly.columns:
-            quarterly = quarterly[quarterly["period"] == _period_type_map.get(co_period_mode, "Quarterly")].copy()
+            quarterly = quarterly[quarterly["period"] == _pf_val].copy()
 
         # Apply 3-year rolling window
         if not quarterly.empty:
@@ -584,10 +585,10 @@ def page_company_detail_enhanced():
             q_all_co = q_all_co[q_all_co["cash_flow_date"] >= _co_cutoff]
 
         if not q_all_co.empty:
-            # Filter to the correct period type (co_period_mode set at top of tab1)
+            # Filter to the correct period type
             if "period" in q_all_co.columns:
-                _period_type_map2 = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
-                q_all_co = q_all_co[q_all_co["period"] == _period_type_map2.get(co_period_mode, "Quarterly")]
+                _pf_map2 = {"Quarterly": "Quarterly", "Monthly": "Monthly", "Yearly": "Annual"}
+                q_all_co = q_all_co[q_all_co["period"] == _pf_map2.get(co_period_mode, "Quarterly")]
 
             # Build period label per mode
             if co_period_mode == "Monthly":

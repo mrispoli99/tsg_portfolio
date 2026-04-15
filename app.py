@@ -849,8 +849,6 @@ def page_portfolio_overview():
         with chart_col:
             view_toggle = tab_period
 
-            # Filter q_filt by the period type column, then group by cash_flow_date
-            # Values are already LTM — just sum across companies per period date
             period_filter_map = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}
             pf = period_filter_map.get(view_toggle, "Quarterly")
 
@@ -862,16 +860,29 @@ def page_portfolio_overview():
             q_chart["cash_flow_date"] = pd.to_datetime(q_chart["cash_flow_date"], errors="coerce")
             q_chart = q_chart.sort_values("cash_flow_date")
 
+            # Build period_label for grouping (avoids gaps from mismatched exact dates)
+            if "period_label" not in q_chart.columns or q_chart["period_label"].isna().all():
+                if view_toggle in ("Yearly", "Annual"):
+                    q_chart["period_label"] = q_chart["cash_flow_date"].dt.year.astype(str)
+                elif view_toggle == "Monthly":
+                    q_chart["period_label"] = q_chart["cash_flow_date"].dt.strftime("%b %Y")
+                else:
+                    q_chart["period_label"] = (
+                        "Q" + q_chart["cash_flow_date"].dt.quarter.astype(str)
+                        + " " + q_chart["cash_flow_date"].dt.year.astype(str)
+                    )
+
             if not q_chart.empty and "revenue" in q_chart.columns:
-                agg = q_chart.groupby("cash_flow_date").agg(
-                    revenue    = ("revenue",    "sum"),
-                    adj_ebitda = ("adj_ebitda", "sum"),
-                ).reset_index().sort_values("cash_flow_date").tail(
-                    10 if view_toggle == "Yearly" else 18 if view_toggle == "Monthly" else 12
-                )
-                agg["period_label"] = agg["cash_flow_date"].dt.strftime(
-                    "%Y" if view_toggle == "Yearly" else "%b %Y"
-                )
+                # Sort period labels chronologically using cash_flow_date median per label
+                _label_order = (q_chart.groupby("period_label")["cash_flow_date"]
+                                .median().sort_values().index.tolist())
+                agg = (q_chart.groupby("period_label")
+                       .agg(revenue=("revenue", "sum"), adj_ebitda=("adj_ebitda", "sum"))
+                       .reindex(_label_order)
+                       .reset_index()
+                       .dropna(subset=["revenue", "adj_ebitda"], how="all")
+                       .tail(10 if view_toggle in ("Yearly", "Annual")
+                             else 18 if view_toggle == "Monthly" else 12))
             else:
                 agg = pd.DataFrame()
 
@@ -994,18 +1005,22 @@ def page_portfolio_overview():
         _t1_q = q_filt.copy() if not q_filt.empty else pd.DataFrame()
         if not _t1_q.empty:
             _t1_q["cash_flow_date"] = pd.to_datetime(_t1_q["cash_flow_date"], errors="coerce")
-            # Filter to correct period type
             _pf_map = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}
+            _pf_val = _pf_map.get(tab_period, "Quarterly")
             if "period" in _t1_q.columns:
-                _t1_q = _t1_q[_t1_q["period"] == _pf_map.get(tab_period, "Quarterly")]
-            # Assign display label
-            if tab_period == "Monthly":
+                _t1_q = _t1_q[_t1_q["period"] == _pf_val].copy()
+            # Use period_label from view if available, else derive it
+            if "period_label" in _t1_q.columns and _t1_q["period_label"].notna().any():
+                _t1_q["_plabel"] = _t1_q["period_label"]
+            elif tab_period == "Monthly":
                 _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%b %Y")
-            elif tab_period == "Yearly":
-                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%Y-%m")
+            elif tab_period in ("Yearly", "Annual"):
+                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.year.astype(str)
             else:
-                _t1_q["_plabel"] = (_t1_q["period_label"] if "period_label" in _t1_q.columns
-                                    else _t1_q["cash_flow_date"].dt.to_period("Q").astype(str))
+                _t1_q["_plabel"] = (
+                    "Q" + _t1_q["cash_flow_date"].dt.quarter.astype(str)
+                    + " " + _t1_q["cash_flow_date"].dt.year.astype(str)
+                )
 
         _t1_periods = []
         if not _t1_q.empty:
@@ -1403,18 +1418,21 @@ def page_portfolio_overview():
         def _period_label(df, mode):
             df = df.copy()
             df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
-            # Filter to correct period type using the period column
+            pf = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}.get(mode, "Quarterly")
             if "period" in df.columns:
-                pf = {"Quarterly": "Quarterly", "Yearly": "Annual", "Monthly": "Monthly"}.get(mode, "Quarterly")
                 df = df[df["period"] == pf]
-            # Assign display label
-            if mode == "Monthly":
+            # Use period_label from view if present, else derive
+            if "period_label" in df.columns and df["period_label"].notna().any():
+                df["_plabel"] = df["period_label"]
+            elif mode == "Monthly":
                 df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
-            elif mode == "Yearly":
-                df["_plabel"] = df["cash_flow_date"].dt.strftime("%Y-%m")
+            elif mode in ("Yearly", "Annual"):
+                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
             else:
-                df["_plabel"] = (df["period_label"] if "period_label" in df.columns
-                                 else df["cash_flow_date"].dt.to_period("Q").astype(str))
+                df["_plabel"] = (
+                    "Q" + df["cash_flow_date"].dt.quarter.astype(str)
+                    + " " + df["cash_flow_date"].dt.year.astype(str)
+                )
             return df
 
         q_prep = _period_label(q_filt, period_mode) if not q_filt.empty else pd.DataFrame()
