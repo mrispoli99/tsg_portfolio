@@ -854,30 +854,28 @@ def page_portfolio_overview():
 
             if not q_chart.empty and "revenue" in q_chart.columns:
                 agg = q_chart.groupby("cash_flow_date").agg(
-                    revenue        = ("revenue",    "sum"),
-                    adj_ebitda     = ("adj_ebitda", "sum"),
+                    revenue    = ("revenue",    "sum"),
+                    adj_ebitda = ("adj_ebitda", "sum"),
                 ).reset_index().sort_values("cash_flow_date").tail(
                     10 if view_toggle == "Yearly" else 18 if view_toggle == "Monthly" else 12
                 )
                 agg["period_label"] = agg["cash_flow_date"].dt.strftime(
-                    "%Y" if view_toggle == "Yearly" else
-                    "%b %Y" if view_toggle == "Monthly" else
-                    "%b %Y"
+                    "%Y" if view_toggle == "Yearly" else "%b %Y"
                 )
             else:
                 agg = pd.DataFrame()
 
-            chart_title = f"Portfolio Revenue & EBITDA — {view_toggle}"
+            chart_title = f"Portfolio LTM Revenue & EBITDA — {view_toggle}"
 
             if not agg.empty:
                 st.markdown(f'<div class="section-header">{chart_title}</div>',
                             unsafe_allow_html=True)
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                 fig.add_trace(go.Bar(x=agg["period_label"], y=agg["revenue"],
-                                      name="Revenue ($M)", marker_color=SLATE, opacity=0.85),
+                                      name="LTM Net Sales ($M)", marker_color=SLATE, opacity=0.85),
                               secondary_y=False)
                 fig.add_trace(go.Bar(x=agg["period_label"], y=agg["adj_ebitda"],
-                                      name="Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85),
+                                      name="LTM Adj. EBITDA ($M)", marker_color=SKY, opacity=0.85),
                               secondary_y=False)
                 margin = agg["adj_ebitda"] / agg["revenue"].replace(0, float("nan"))
                 fig.add_trace(go.Scatter(x=agg["period_label"], y=margin,
@@ -2373,13 +2371,12 @@ def page_company_detail():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Revenue & EBITDA trend
+    # LTM Revenue & EBITDA time-series trend
     quarterly = load_quarterly(selected)
     if not quarterly.empty:
-        st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
+        st.markdown('<div class="section-header">LTM Revenue & EBITDA Trend</div>',
                     unsafe_allow_html=True)
 
-        # Period mode selector for company overview charts
         _co_ov_period_col, _co_ov_range_col, _ = st.columns([2, 3, 3])
         with _co_ov_period_col:
             _co_ov_mode = st.radio(
@@ -2389,7 +2386,6 @@ def page_company_detail():
                 key=f"co_ov_period_{selected}",
                 label_visibility="collapsed",
             )
-        # Filter to the selected period type only
         _ov_period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly"}
         if "period" in quarterly.columns:
             quarterly_ov = quarterly[quarterly["period"] == _ov_period_map[_co_ov_mode]].copy()
@@ -2398,12 +2394,10 @@ def page_company_detail():
         quarterly_ov["cash_flow_date"] = pd.to_datetime(quarterly_ov["cash_flow_date"], errors="coerce")
         quarterly_ov = quarterly_ov.sort_values("cash_flow_date")
 
-        # Date range — default last 12 months (monthly) or last 24 months (quarterly)
         _default_months = 12 if _co_ov_mode == "Monthly" else 24
         _min_date = quarterly_ov["cash_flow_date"].min()
         _max_date = quarterly_ov["cash_flow_date"].max()
-        _default_start = _max_date - pd.DateOffset(months=_default_months)
-        _default_start = max(_default_start, _min_date)
+        _default_start = max(_max_date - pd.DateOffset(months=_default_months), _min_date)
 
         with _co_ov_range_col:
             _date_range = st.date_input(
@@ -2423,18 +2417,16 @@ def page_company_detail():
 
         if not quarterly_ov.empty:
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            _rev = quarterly_ov["revenue"].combine_first(quarterly_ov["net_sales"])
+            # revenue column = LTM Net Sales (Actual) from updated view
+            _rev = quarterly_ov["revenue"].combine_first(quarterly_ov.get("net_sales", pd.Series(dtype=float)))
             fig.add_trace(go.Bar(
-                x=quarterly_ov["period_label"],
-                y=_rev,
-                name="Revenue ($M)", marker_color=NAVY, opacity=0.8
+                x=quarterly_ov["period_label"], y=_rev,
+                name="LTM Net Sales ($M)", marker_color=NAVY, opacity=0.8
             ), secondary_y=False)
             fig.add_trace(go.Bar(
-                x=quarterly_ov["period_label"],
-                y=quarterly_ov["adj_ebitda"],
-                name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8
+                x=quarterly_ov["period_label"], y=quarterly_ov["adj_ebitda"],
+                name="LTM Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8
             ), secondary_y=False)
-            # Connect margin line — drop NaN so line is continuous
             _margin_df = quarterly_ov[["period_label", "adj_ebitda"]].copy()
             _margin_df["_rev"] = _rev.values
             _margin_df["margin"] = _margin_df["adj_ebitda"] / _margin_df["_rev"].replace(0, float("nan"))

@@ -72,19 +72,35 @@ def page_consumer_kpis():
         st.info("No KPI data available. KPI attributes will appear here once data is loaded.")
         return
 
-    # Get unique KPI names
-    kpi_names = sorted(kpi_df["attribute_name"].unique().tolist())
+    # Filter to datasheet KPIs only
+    kpi_df = kpi_df[kpi_df["attribute_name"].str.contains("datasheet", case=False, na=False)].copy()
+
+    if kpi_df.empty:
+        st.info("No datasheet KPIs found. Ensure attributes with 'datasheet' in the name are loaded.")
+        return
+
+    # Create a clean display label by stripping "datasheet" (and surrounding punctuation/spaces)
+    import re
+    kpi_df["display_name"] = kpi_df["attribute_name"].apply(
+        lambda x: re.sub(r"[\s\-–_]*datasheet[\s\-–_]*", " ", x, flags=re.IGNORECASE).strip(" -–_")
+    )
+
+    # Get unique KPI names (use display_name for UI, attribute_name for filtering)
+    name_map = kpi_df[["attribute_name", "display_name"]].drop_duplicates().set_index("display_name")["attribute_name"].to_dict()
+    kpi_names = sorted(name_map.keys())
 
     # Filters
     col_f1, col_f2 = st.columns([2, 3])
     with col_f1:
-        selected_kpi = st.selectbox("Select KPI", kpi_names)
+        selected_display = st.selectbox("Select KPI", kpi_names)
     with col_f2:
         companies = sorted(kpi_df["company_name"].unique().tolist())
         selected_companies = st.multiselect("Filter Companies", companies, default=companies)
 
-    if not selected_kpi:
+    if not selected_display:
         return
+
+    selected_kpi = name_map.get(selected_display, selected_display)
 
     filtered = kpi_df[
         (kpi_df["attribute_name"] == selected_kpi) &
@@ -92,10 +108,10 @@ def page_consumer_kpis():
     ].sort_values("true_up_value", ascending=True)
 
     if filtered.empty:
-        st.info(f"No data available for {selected_kpi}")
+        st.info(f"No data available for {selected_display}")
         return
 
-    st.markdown(f'<div class="section-header">{selected_kpi} — Latest Quarter by Company</div>',
+    st.markdown(f'<div class="section-header">{selected_display} — Most Recent LTM by Company</div>',
                 unsafe_allow_html=True)
 
     # Horizontal bar chart
@@ -125,67 +141,19 @@ def page_consumer_kpis():
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # KPI trend over time for selected companies
-    st.markdown(f'<div class="section-header">{selected_kpi} — Quarterly Trend</div>',
-                unsafe_allow_html=True)
-
-    # Pull time series from quarterly view
-    quarterly_all = pd.DataFrame()
-    for company in selected_companies[:6]:  # Limit to 6 for readability
-        try:
-            q = load_quarterly(company)
-            # Try to find this KPI in the quarterly data
-            # KPIs are stored as separate attributes; check if column exists
-            kpi_col_map = {
-                "Revenue (Global)":          "revenue",
-                "EBITDA (Global)":           "ebitda_global",
-                "Adj. EBITDA (Global)":      "adj_ebitda_global",
-                "Total Debt / EBITDA (Global)": "net_leverage",
-                "Gross Margin (Global)":     "gross_margin_global",
-                "EBITDA / (Interest+Principal)": "interest_coverage",
-            }
-            col = kpi_col_map.get(selected_kpi)
-            if col and col in q.columns:
-                sub = q[["period_label", "cash_flow_date", col]].dropna()
-                sub["company_name"] = company
-                sub = sub.rename(columns={col: "value"})
-                quarterly_all = pd.concat([quarterly_all, sub])
-        except Exception:
-            pass
-
-    if not quarterly_all.empty:
-        import pandas as _pd2
-        quarterly_all["cash_flow_date"] = _pd2.to_datetime(quarterly_all["cash_flow_date"], errors="coerce")
-        _q_cutoff = _pd2.Timestamp.now() - _pd2.DateOffset(years=3)
-        quarterly_all = quarterly_all[quarterly_all["cash_flow_date"] >= _q_cutoff]
-        quarterly_all = quarterly_all.sort_values("cash_flow_date")
-        fig2 = px.line(
-            quarterly_all, x="period_label", y="value",
-            color="company_name",
-            color_discrete_sequence=[NAVY, SLATE, SKY, XANTHOUS, CELADON, SEA_GREEN],
-            markers=True,
-            labels={"period_label": "", "value": selected_kpi, "company_name": "Company"},
-        )
-        fig2.update_layout(
-            height=320, plot_bgcolor="white", paper_bgcolor="white",
-            margin=dict(l=0, r=0, t=10, b=0),
-            font=dict(family="Arial", color=NAVY, size=10),
-            legend=dict(orientation="h", y=-0.2),
-            xaxis=dict(tickangle=-45),
-            yaxis=dict(gridcolor=BORDER),
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-    # Full KPI heatmap — all KPIs x all companies (latest values)
+    # Full KPI scorecard — all datasheet KPIs x all companies (latest values), display names as rows
     st.markdown('<div class="section-header">Full KPI Scorecard — All Companies</div>',
                 unsafe_allow_html=True)
 
-    pivot = kpi_df[kpi_df["company_name"].isin(selected_companies)].pivot_table(
-        index="attribute_name", columns="company_name", values="true_up_value", aggfunc="last"
+    pivot_data = kpi_df[kpi_df["company_name"].isin(selected_companies)].copy()
+    pivot_data["display_name"] = pivot_data["attribute_name"].apply(
+        lambda x: re.sub(r"[\s\-–_]*datasheet[\s\-–_]*", " ", x, flags=re.IGNORECASE).strip(" -–_")
+    )
+    pivot = pivot_data.pivot_table(
+        index="display_name", columns="company_name", values="true_up_value", aggfunc="last"
     )
 
     if not pivot.empty:
-        # Format values
         display_pivot = pivot.copy()
         for col in display_pivot.columns:
             display_pivot[col] = display_pivot[col].apply(
@@ -514,20 +482,23 @@ def page_company_detail_enhanced():
             quarterly = quarterly[quarterly["cash_flow_date"] >= _cutoff]
 
         if not quarterly.empty:
-            # Revenue & EBITDA trend
-            st.markdown('<div class="section-header">Revenue & EBITDA Trend</div>',
+            # Revenue & EBITDA trend — LTM values per period (time series)
+            st.markdown('<div class="section-header">LTM Revenue & EBITDA Trend</div>',
                         unsafe_allow_html=True)
             from plotly.subplots import make_subplots
             fig = make_subplots(specs=[[{"secondary_y": True}]])
+            # revenue and adj_ebitda columns now hold LTM Net Sales and LTM Adj. EBITDA
             rev = quarterly["revenue"].combine_first(quarterly["net_sales"])
-            # Drop NaN for connected margin line
             _margin_s = (quarterly["adj_ebitda"] / rev.replace(0, float("nan")))
-            _margin_df = pd.DataFrame({"period_label": quarterly["period_label"], "margin": _margin_s}).dropna()
+            _margin_df = pd.DataFrame({
+                "period_label": quarterly["period_label"],
+                "margin": _margin_s
+            }).dropna()
             fig.add_trace(go.Bar(x=quarterly["period_label"], y=rev,
-                                  name="Revenue ($M)", marker_color=NAVY, opacity=0.8),
+                                  name="LTM Net Sales ($M)", marker_color=NAVY, opacity=0.8),
                           secondary_y=False)
             fig.add_trace(go.Bar(x=quarterly["period_label"], y=quarterly["adj_ebitda"],
-                                  name="Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8),
+                                  name="LTM Adj. EBITDA ($M)", marker_color=SLATE, opacity=0.8),
                           secondary_y=False)
             fig.add_trace(go.Scatter(x=_margin_df["period_label"], y=_margin_df["margin"],
                                       name="EBITDA Margin %", mode="lines+markers",
@@ -535,7 +506,7 @@ def page_company_detail_enhanced():
                                       connectgaps=True),
                           secondary_y=True)
             fig.update_layout(height=420, plot_bgcolor="white", paper_bgcolor="white",
-                               margin=dict(l=0,r=0,t=10,b=0), barmode="group",
+                               margin=dict(l=0, r=0, t=10, b=0), barmode="group",
                                legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
                                font=dict(family="Arial", color=NAVY, size=10))
             fig.update_yaxes(tickformat="$,.0f", gridcolor=BORDER, secondary_y=False)
@@ -632,33 +603,60 @@ def page_company_detail_enhanced():
             all_co_periods = (q_all_co.sort_values("cash_flow_date")["_plabel"]
                               .drop_duplicates().tolist())
 
-            # KPI definitions for this table
+            # KPI definitions mapped to column names in the updated Datasheet views
             # (display_label, column, format_fn, is_pct, threshold_fn)
-            # threshold_fn: given value, returns "Red"|"Yellow"|"Green"|None
-            # Column names match exactly what's in the CSV — ltm_ prefix only when metric says LTM
             CO_KPI_DEFS = [
-                ("LTM Revenue ($M)",       "ltm_revenue",           format_millions, False,
-                    None),
-                ("LTM Adj. EBITDA ($M)",   "ltm_adj_ebitda",        format_millions, False,
-                    None),
-                ("EBITDA Margin %",         "adj_ebitda_margin_pct", format_pct,      True,
+                # LTM Income
+                ("LTM Net Sales ($M)",                  "revenue",                  format_millions,  False, None),
+                ("LTM Adj. EBITDA ($M)",                "adj_ebitda",               format_millions,  False, None),
+                ("LTM EBITDA (Actual) ($M)",            "ltm_ebitda_actual",        format_millions,  False, None),
+                ("LTM Credit Agreement EBITDA ($M)",    "ltm_credit_agreement_ebitda", format_millions, False, None),
+                # LTM Margins (derived)
+                ("EBITDA Margin %",                     "adj_ebitda_margin_pct",    format_pct,       True,
                     lambda v: "Green" if v > 0.18 else "Yellow" if v > 0.10 else "Red"),
-                ("Gross Profit ($M)",       "gross_profit",          format_millions, False,
-                    None),
-                ("Gross Margin %",          "gross_margin_pct",      format_pct,      True,
-                    None),
-                ("Net Leverage",            "net_leverage",          format_multiple, False,
-                    lambda v: "Green" if v < 5 else "Yellow" if v < 6 else "Red"),
-                ("Interest Coverage",       "interest_coverage",     format_multiple, False,
-                    lambda v: "Green" if v > 3 else "Yellow" if v > 2 else "Red"),
-                ("Net Debt ($M)",           "net_debt",              format_millions, False,
-                    None),
-                ("Total Gross Debt ($M)",   "total_gross_debt",      format_millions, False,
-                    None),
-                ("LTM Free Cash Flow ($M)", "ltm_free_cash_flow",    format_millions, False,
+                # LTM Cash Flow
+                ("LTM Free Cash Flow ($M)",             "ltm_free_cash_flow",       format_millions,  False,
                     lambda v: "Green" if v > 0 else "Red"),
-                ("LTM Capex ($M)",          "ltm_capex",             format_millions, False,
-                    None),
+                ("LTM Capex ($M)",                      "ltm_capex",                format_millions,  False, None),
+                ("LTM Cash Interest Expense ($M)",      "ltm_cash_interest",        format_millions,  False, None),
+                ("LTM Cash Taxes ($M)",                 "ltm_cash_taxes",           format_millions,  False, None),
+                ("LTM Δ NWC ($M)",                     "ltm_change_nwc",           format_millions,  False, None),
+                ("LTM Mandatory Principal Pmts ($M)",   "ltm_principal_payments",   format_millions,  False, None),
+                # Debt & Balance Sheet
+                ("Cash ($M)",                           "cash",                     format_millions,  False, None),
+                ("Net Debt (Actual) ($M)",              "net_debt",                 format_millions,  False, None),
+                ("Net Debt (Credit Agreement) ($M)",    "net_debt_credit_agreement",format_millions,  False, None),
+                ("Total Gross Debt ($M)",               "total_gross_debt",         format_millions,  False, None),
+                ("Floating Rate Debt ($M)",             "floating_rate_debt",       format_millions,  False, None),
+                ("Fixed Rate Debt ($M)",                "fixed_rate_debt",          format_millions,  False, None),
+                ("PIK Debt ($M)",                       "pik_debt",                 format_millions,  False, None),
+                ("Senior Secured Portion ($M)",         "senior_secured_debt",      format_millions,  False, None),
+                ("Other Debt ($M)",                     "other_debt",               format_millions,  False, None),
+                # Leverage & Coverage
+                ("Net Debt / EBITDA",                   "net_leverage",             format_multiple,  False,
+                    lambda v: "Green" if v < 5 else "Yellow" if v < 6 else "Red"),
+                ("Total Gross Leverage",                "gross_leverage",           format_multiple,  False, None),
+                ("Total Net Leverage",                  "total_net_leverage",       format_multiple,  False, None),
+                ("Senior Secured Gross Leverage",       "senior_secured_leverage",  format_multiple,  False, None),
+                ("Interest Coverage Ratio",             "interest_coverage",        format_multiple,  False,
+                    lambda v: "Green" if v > 3 else "Yellow" if v > 2 else "Red"),
+                ("Debt Service Coverage Ratio",         "debt_service_coverage",    format_multiple,  False,
+                    lambda v: "Green" if v > 1.8 else "Yellow" if v > 1.2 else "Red"),
+                # Valuation
+                ("TEV (Actual) ($M)",                   "tev",                      format_millions,  False, None),
+                ("TEV / EBITDA",                        "tev_to_ebitda",            format_multiple,  False, None),
+                ("TEV / Net Sales",                     "tev_to_revenue",           format_multiple,  False, None),
+                # Returns & Ownership
+                ("Gross MOI",                           "gross_moi",                format_multiple,  False, None),
+                ("Gross IRR",                           "gross_irr",                format_pct,       True,  None),
+                ("Total Cost ($M)",                     "total_cost",               format_millions,  False, None),
+                ("Unrealized Value ($M)",               "unrealized_value",         format_millions,  False, None),
+                ("Realized Proceeds ($M)",              "realized_proceeds",        format_millions,  False, None),
+                ("Total Realized & Unrealized ($M)",    "total_value",              format_millions,  False, None),
+                ("Fund Current Ownership %",            "fund_current_ownership",   format_pct,       True,  None),
+                ("Fund Ownership at Entry %",           "fund_ownership_at_entry",  format_pct,       True,  None),
+                ("TSG Controlled Ownership %",          "tsg_current_ownership",    format_pct,       True,  None),
+                ("TSG Ownership at Entry %",            "tsg_ownership_at_entry",   format_pct,       True,  None),
             ]
 
             # Active KPI state (drives the chart below)
