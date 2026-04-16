@@ -18,7 +18,7 @@ from db import (
     load_consumer_kpis, get_company_list,
     format_millions, format_multiple, format_pct, flag_color, flag_emoji
 )
-from ai import build_company_context_with_news, ask_claude
+from ai import build_company_context, ask_claude
 
 # TSG Brand Colors
 NAVY      = "#071733"
@@ -594,9 +594,9 @@ def page_company_detail_enhanced():
             if co_period_mode == "Monthly":
                 q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.strftime("%b %Y")
             elif co_period_mode == "Yearly":
-                q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.year.astype(str)
+                q_all_co["_plabel"] = q_all_co["cash_flow_date"].dt.strftime("%Y")
             else:
-                q_all_co["_plabel"] = (q_all_co["period_label"]
+                q_all_co["_plabel"] = (q_all_co["period_label"].astype(str)
                                        if "period_label" in q_all_co.columns
                                        else q_all_co["cash_flow_date"].dt.to_period("Q").astype(str))
 
@@ -1001,10 +1001,17 @@ def page_company_detail_enhanced():
                 Macro data integration (CapIQ comps, sector benchmarks) coming soon.
             </div>
             """, unsafe_allow_html=True)
-        try:
-            render_news_section(selected)
-        except Exception as exc:
-            st.info(f"News not available: {exc}")
+        # News — coming soon
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:20px 24px; margin-bottom:16px;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
+                        margin-bottom:4px;">📰 Company News</div>
+            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
+                News feed coming soon.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with tab6:
         if info_row is None:

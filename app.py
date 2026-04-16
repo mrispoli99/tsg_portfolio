@@ -1019,11 +1019,11 @@ def page_portfolio_overview():
                 _t1_q = _t1_q[_t1_q["period"] == _pf_val].copy()
             # Use period_label from view if available, else derive it
             if "period_label" in _t1_q.columns and _t1_q["period_label"].notna().any():
-                _t1_q["_plabel"] = _t1_q["period_label"]
+                _t1_q["_plabel"] = _t1_q["period_label"].astype(str)
             elif tab_period == "Monthly":
                 _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%b %Y")
             elif tab_period in ("Yearly", "Annual"):
-                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.year.astype(str)
+                _t1_q["_plabel"] = _t1_q["cash_flow_date"].dt.strftime("%Y")
             else:
                 _t1_q["_plabel"] = (
                     "Q" + _t1_q["cash_flow_date"].dt.quarter.astype(str)
@@ -1440,11 +1440,11 @@ def page_portfolio_overview():
                 df = df[df["period"] == pf]
             # Use period_label from view if present, else derive
             if "period_label" in df.columns and df["period_label"].notna().any():
-                df["_plabel"] = df["period_label"]
+                df["_plabel"] = df["period_label"].astype(str)
             elif mode == "Monthly":
                 df["_plabel"] = df["cash_flow_date"].dt.strftime("%b %Y")
             elif mode in ("Yearly", "Annual"):
-                df["_plabel"] = df["cash_flow_date"].dt.year.astype(str)
+                df["_plabel"] = df["cash_flow_date"].dt.strftime("%Y")
             else:
                 df["_plabel"] = (
                     "Q" + df["cash_flow_date"].dt.quarter.astype(str)
