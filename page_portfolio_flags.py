@@ -411,7 +411,7 @@ def render_company_scorecard(row: pd.Series):
     # Summary counts
     red_count    = int(row.get("red_flag_count", 0))
     yellow_count = int(row.get("yellow_flag_count", 0))
-    green_best   = sum(1 for _, fc, _, _ in flag_items
+    green_best   = sum(1 for _, fc, _, _, _, _ in flag_items
                        if row.get(fc) in ("Green", "Best"))
 
     st.markdown(f"""
