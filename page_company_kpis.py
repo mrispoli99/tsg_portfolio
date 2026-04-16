@@ -198,28 +198,14 @@ def page_company_kpis():
     # ── Company list from config ──────────────────────────────────────────────
     companies = sorted(COMPANY_KPI_CONFIG.keys())
 
-    # ── Sidebar selector ─────────────────────────────────────────────────────
-    with st.sidebar:
-        st.markdown("### Company KPIs")
-        selected = st.radio(
-            "Select company",
+    # ── Company selector — top of page ───────────────────────────────────────
+    sel_col, period_col = st.columns([2, 3])
+    with sel_col:
+        selected = st.selectbox(
+            "Company",
             companies,
-            label_visibility="collapsed",
             key="kpi_page_company",
         )
-
-    if selected not in COMPANY_KPI_CONFIG:
-        st.info("No KPI config found for this company.")
-        return
-
-    cfg = COMPANY_KPI_CONFIG[selected]
-    kpi_cards  = cfg.get("kpi_cards", [])
-    kpi_charts = cfg.get("kpi_charts", [])
-
-    # ── Period selector ───────────────────────────────────────────────────────
-    all_attrs = [k["attribute"] for k in kpi_cards] + [k["attribute"] for k in kpi_charts]
-
-    period_col, _, info_col = st.columns([2, 4, 2])
     with period_col:
         period_mode = st.radio(
             "Period",
@@ -230,6 +216,15 @@ def page_company_kpis():
         )
     period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly", "Annual": "Annual"}
     period_val = period_map[period_mode]
+
+    if selected not in COMPANY_KPI_CONFIG:
+        st.info("No KPI config found for this company.")
+        return
+
+    cfg        = COMPANY_KPI_CONFIG[selected]
+    kpi_cards  = cfg.get("kpi_cards", [])
+    kpi_charts = cfg.get("kpi_charts", [])
+    all_attrs  = [k["attribute"] for k in kpi_cards] + [k["attribute"] for k in kpi_charts]
 
     # ── Load data ─────────────────────────────────────────────────────────────
     df = load_company_kpis(selected, all_attrs, period_val)
