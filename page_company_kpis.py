@@ -314,3 +314,210 @@ def page_company_kpis():
 
                     st.plotly_chart(fig, use_container_width=True,
                                     config={"displayModeBar": False})
+
+    # ── AI Summary ───────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header-co">AI Summary</div>', unsafe_allow_html=True)
+
+    _render_ai_summary(selected, df, kpi_cards, kpi_charts)
+
+
+def _build_kpi_context(company: str, df: pd.DataFrame,
+                       kpi_cards: list, kpi_charts: list) -> str:
+    """
+    Build a plain-text data context from the actual loaded data.
+    Only includes values that are present — never fabricates.
+    """
+    from db import load_ltm_snapshot, load_flags
+
+    lines = [f"Company: {company}", ""]
+
+    # ── Standard financial KPIs from ltm_snapshot & flags ────────────────────
+    try:
+        snap = load_ltm_snapshot()
+        snap_row = snap[snap["company_name"] == company]
+        if not snap_row.empty:
+            r = snap_row.iloc[0]
+            lines.append("=== Standard Financial KPIs (LTM) ===")
+            def _add(label, val, fmt):
+                from db import format_millions, format_multiple, format_pct
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    if fmt == "millions":   lines.append(f"  {label}: {format_millions(val)}")
+                    elif fmt == "multiple": lines.append(f"  {label}: {format_multiple(val)}")
+                    elif fmt == "pct":      lines.append(f"  {label}: {format_pct(val)}")
+                    else:                   lines.append(f"  {label}: {val}")
+            _add("LTM Net Sales",         r.get("ltm_revenue"),           "millions")
+            _add("LTM Adj. EBITDA",       r.get("ltm_adj_ebitda"),        "millions")
+            _add("EBITDA Margin",         r.get("adj_ebitda_margin_pct"), "pct")
+            _add("Net Debt",              r.get("net_debt"),              "millions")
+            _add("Net Leverage",          r.get("net_leverage_x"),        "multiple")
+            _add("Interest Coverage",     r.get("interest_coverage"),     "multiple")
+            _add("LTM Free Cash Flow",    r.get("ltm_free_cash_flow"),    "millions")
+            _add("TEV",                   r.get("current_tev"),           "millions")
+            _add("Gross MOI",             r.get("gross_moi"),             "multiple")
+            lines.append("")
+    except Exception:
+        pass
+
+    try:
+        flags = load_flags()
+        flags_row = flags[flags["company_name"] == company]
+        if not flags_row.empty:
+            r = flags_row.iloc[0]
+            lines.append("=== Flag Status ===")
+            from db import format_pct, format_multiple
+            overall = r.get("overall_flag", "")
+            if overall:
+                lines.append(f"  Overall Flag: {overall}")
+            rev_yoy = r.get("revenue_yoy")
+            if rev_yoy is not None and not pd.isna(rev_yoy):
+                lines.append(f"  Revenue YoY Growth: {format_pct(rev_yoy)}")
+            lines.append("")
+    except Exception:
+        pass
+
+    # ── Company-specific KPIs from the loaded df ──────────────────────────────
+    if not df.empty:
+        lines.append("=== Company-Specific KPIs ===")
+        # Latest period values for all configured KPIs
+        latest = df.sort_values("cash_flow_date").iloc[-1]
+        period_label = latest.get("period_label", str(latest["cash_flow_date"])[:10])
+        lines.append(f"  Latest period: {period_label}")
+
+        all_cfgs = kpi_cards + kpi_charts
+        seen = set()
+        for cfg in all_cfgs:
+            attr  = cfg["attribute"]
+            label = cfg["label"]
+            fmt   = cfg["format"]
+            if attr in seen or attr not in latest.index:
+                continue
+            seen.add(attr)
+            val = latest.get(attr)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            lines.append(f"  {label}: {_fmt(val, fmt)}")
+
+        # Also include recent trend (last 4 periods) for card metrics
+        lines.append("")
+        lines.append("  Recent trend (last 4 periods):")
+        recent = df.sort_values("cash_flow_date").tail(4)
+        for cfg in kpi_cards:
+            attr  = cfg["attribute"]
+            label = cfg["label"]
+            fmt   = cfg["format"]
+            if attr not in recent.columns:
+                continue
+            vals = recent[["period_label", attr]].dropna(subset=[attr])
+            if vals.empty:
+                continue
+            trend = ", ".join(
+                f"{row['period_label']}: {_fmt(row[attr], fmt)}"
+                for _, row in vals.iterrows()
+            )
+            lines.append(f"    {label}: {trend}")
+
+    return "\n".join(lines)
+
+
+def _render_ai_summary(company: str, df: pd.DataFrame,
+                       kpi_cards: list, kpi_charts: list):
+    """Render the AI summary section with a generate button and chat input."""
+    try:
+        from ai import ask_claude
+    except ImportError:
+        st.info("AI module not available.")
+        return
+
+    session_key = f"kpi_ai_summary_{company}"
+    chat_key    = f"kpi_ai_chat_{company}"
+
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    # ── System prompt — strict grounding ─────────────────────────────────────
+    SYSTEM = (
+        "You are a private equity analyst assistant. You have been given structured financial "
+        "data for a specific portfolio company. Your job is to summarize and analyze ONLY the "
+        "data you have been provided. Rules you must follow:\n"
+        "1. Never invent, estimate, or guess any number not explicitly in the data.\n"
+        "2. If a metric is not in the data, say 'not available' — do not substitute or infer.\n"
+        "3. Be concise and factual. Use bullet points for summaries.\n"
+        "4. When referencing numbers, always cite the period they relate to.\n"
+        "5. Do not make forward-looking statements unless asked and only based on visible trends."
+    )
+
+    context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
+
+    # ── Auto-generate summary on first load ───────────────────────────────────
+    if session_key not in st.session_state:
+        with st.spinner("Generating summary..."):
+            try:
+                prompt = (
+                    f"Using only the data provided, write a concise performance summary for "
+                    f"{company} in 4-6 bullet points. Cover: (1) revenue and EBITDA trajectory, "
+                    f"(2) margin trends, (3) leverage/credit position, (4) any notable "
+                    f"company-specific KPI trends visible in the data. "
+                    f"Do not reference any data not explicitly provided."
+                )
+                summary = ask_claude(prompt, context + "\n\nSystem instructions: " + SYSTEM, [])
+                st.session_state[session_key] = summary
+                st.session_state[chat_key] = [
+                    {"role": "user",      "content": prompt},
+                    {"role": "assistant", "content": summary},
+                ]
+            except Exception as e:
+                st.session_state[session_key] = f"Could not generate summary: {e}"
+
+    # ── Display summary ───────────────────────────────────────────────────────
+    summary = st.session_state.get(session_key, "")
+    if summary:
+        st.markdown(f"""
+        <div style="background:#F7F8FA; border-left:3px solid #4A6FA5;
+                    border-radius:4px; padding:14px 18px; margin-bottom:16px;
+                    font-size:13px; color:#1B2A4A; font-family:Arial;
+                    line-height:1.7; white-space:pre-line;">{summary}</div>
+        """, unsafe_allow_html=True)
+
+    # ── Refresh button ────────────────────────────────────────────────────────
+    ref_col, _ = st.columns([1, 5])
+    with ref_col:
+        if st.button("↺ Regenerate", key=f"regen_{company}", use_container_width=True):
+            del st.session_state[session_key]
+            st.rerun()
+
+    # ── Follow-up chat ────────────────────────────────────────────────────────
+    st.caption("Ask follow-up questions — answers are grounded in the data above only.")
+
+    # Show prior follow-ups (skip the auto-generated summary exchange)
+    for msg in st.session_state[chat_key][2:]:
+        if msg["role"] == "user":
+            st.markdown(
+                f'<div style="background:#EBF2FB;border-radius:6px;padding:8px 12px;'
+                f'margin:6px 0;font-size:13px;font-family:Arial;color:#1B2A4A;">'
+                f'{msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f'<div style="background:white;border:0.5px solid #E0E4EA;border-radius:6px;'
+                f'padding:8px 12px;margin:6px 0;font-size:13px;font-family:Arial;'
+                f'color:#1B2A4A;line-height:1.7;white-space:pre-line;">'
+                f'{msg["content"]}</div>', unsafe_allow_html=True)
+
+    user_q = st.chat_input(
+        f"Ask about {company}'s KPIs...",
+        key=f"kpi_chat_input_{company}"
+    )
+    if user_q:
+        st.session_state[chat_key].append({"role": "user", "content": user_q})
+        with st.spinner("Thinking..."):
+            try:
+                history = st.session_state[chat_key][:-1]
+                resp = ask_claude(
+                    user_q,
+                    context + "\n\nSystem instructions: " + SYSTEM,
+                    history
+                )
+            except Exception as e:
+                resp = f"Error: {e}"
+        st.session_state[chat_key].append({"role": "assistant", "content": resp})
+        st.rerun()
+
