@@ -1079,7 +1079,7 @@ def page_portfolio_overview():
                 prev_val = val
             _t1_rows.append(row)
 
-        if _t1_rows:
+        if _t1_rows and _t1_display_periods:
             _t1_df = pd.DataFrame(_t1_rows).set_index("Company")
             _t1_delta_cols = [c for c in _t1_df.columns if c.startswith("Δ ")]
 
@@ -1372,7 +1372,10 @@ def page_portfolio_overview():
                 st.info(f"Chart not available for {_t1_sel}.")
 
         else:
-            st.info("No data available for the selected metric and filter.")
+            if not _t1_display_periods:
+                st.info(f"No {tab_period} data available. Check that `financials_annual.csv` / `financials_monthly.csv` has been exported and contains data for this period.")
+            else:
+                st.info("No data available for the selected metric and filter.")
 
 
     # ---- TAB 2: By Company Trends — classic metrics × companies snapshot ----
