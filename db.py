@@ -186,35 +186,86 @@ def load_consumer_kpis() -> pd.DataFrame:
     df = load_quarterly_all()
     if df.empty:
         return pd.DataFrame()
-    # Only quarterly period for KPI snapshots
-    if "period" in df.columns:
-        df = df[df["period"] == "Quarterly"]
-    # Datasheet column names — map to display labels
-    kpi_col_map = {
-        "revenue":                  "LTM Net Sales (Actual) (Datasheet)",
-        "adj_ebitda":               "LTM Adj. EBITDA (Datasheet)",
-        "net_leverage":             "Net Debt / EBITDA (Datasheet)",
-        "interest_coverage":        "Interest Coverage Ratio (Datasheet)",
-        "adj_ebitda_margin_pct":    "EBITDA Margin (Datasheet)",
-        "ltm_free_cash_flow":       "LTM Free Cash Flow (Datasheet)",
-        "total_gross_debt":         "Total Gross Debt (Datasheet)",
-        "net_debt":                 "Net Debt (Actual) (Datasheet)",
-        "tev":                      "TEV (Actual) (Datasheet)",
-        "gross_moi":                "Gross MOI (Datasheet)",
-        "gross_irr":                "Gross IRR (Datasheet)",
-    }
+    kpi_cols = ["revenue", "adj_ebitda", "net_leverage",
+                "interest_coverage", "gross_margin_pct", "adj_ebitda_margin_pct"]
     rows = []
-    for col, display_name in kpi_col_map.items():
-        if col not in df.columns:
-            continue
+    for col in [c for c in kpi_cols if c in df.columns]:
         latest = (df.sort_values("cash_flow_date")
                     .groupby("company_name").last().reset_index())
-        sub = latest[["company_name", "cash_flow_date", col]].dropna(subset=[col]).copy()
-        sub["attribute_name"] = display_name
+        sub = latest[["company_name", "cash_flow_date", col]].dropna(subset=[col])
+        sub = sub.copy()
+        sub["attribute_name"] = col.replace("_", " ").title()
         sub["true_up_value"]  = sub[col]
         sub["tag"]            = "KPI"
-        rows.append(sub[["company_name", "attribute_name", "cash_flow_date", "true_up_value"]])
+        rows.append(sub[["company_name", "attribute_name",
+                          "cash_flow_date", "true_up_value"]])
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+@st.cache_data
+def load_company_kpis_all() -> pd.DataFrame:
+    """Load the long-format company-specific KPI data."""
+    df = _csv("company_kpis.csv")
+    if df.empty:
+        return df
+    df["cash_flow_date"] = pd.to_datetime(df["cash_flow_date"], errors="coerce")
+    if "period" not in df.columns:
+        df["period"] = "Quarterly"
+    return df.sort_values(["company_name", "attribute_name", "cash_flow_date"])
+
+
+def load_company_kpis(company_name: str, attributes: list, period: str = "Quarterly") -> pd.DataFrame:
+    """
+    Return a wide-format DataFrame for one company's configured KPIs.
+
+    Parameters
+    ----------
+    company_name : str
+        Must match company_name in company_kpis.csv exactly.
+    attributes   : list[str]
+        Attribute names to include (from company_kpi_config.py).
+    period       : str
+        'Quarterly' | 'Monthly' | 'Annual'
+
+    Returns
+    -------
+    DataFrame with columns: cash_flow_date, period_label, <attribute_name...>
+    One row per reporting date, one column per attribute.
+    """
+    df = load_company_kpis_all()
+    if df.empty:
+        return pd.DataFrame()
+
+    mask = (
+        (df["company_name"] == company_name) &
+        (df["attribute_name"].isin(attributes)) &
+        (df["period"] == period)
+    )
+    sub = df[mask].copy()
+    if sub.empty:
+        return pd.DataFrame()
+
+    # Pivot to wide format
+    pivot = (sub.pivot_table(
+                index="cash_flow_date",
+                columns="attribute_name",
+                values="true_up_value",
+                aggfunc="last")
+               .reset_index()
+               .sort_values("cash_flow_date"))
+
+    # Add period_label
+    if period == "Monthly":
+        pivot["period_label"] = pivot["cash_flow_date"].dt.strftime("%b %Y")
+    elif period == "Annual":
+        pivot["period_label"] = pivot["cash_flow_date"].dt.strftime("%Y")
+    else:
+        pivot["period_label"] = (
+            "Q" + pivot["cash_flow_date"].dt.quarter.astype(str)
+            + " " + pivot["cash_flow_date"].dt.year.astype(str)
+        )
+
+    return pivot
+
 
 def get_company_list() -> list:
     df = load_company_master()

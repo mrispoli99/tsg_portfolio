@@ -415,6 +415,7 @@ PAGES = [
     ("Portfolio",           "portfolio_overview"),
     ("Fund – Coming Soon",  "fund_summary"),
     ("Companies",           "company_detail"),
+    ("Company KPIs",        "company_kpis"),
     ("KPI Metric Alerts",   "flags_alerts"),
     ("SOP & Trainings",     "sop_training"),
     ("Data Export",         "export_ppt"),
@@ -3371,6 +3372,9 @@ def main():
             page_company_detail_enhanced()
         elif page == "flags_alerts":
             page_flags_alerts()
+        elif page == "company_kpis":
+            from page_company_kpis import page_company_kpis
+            page_company_kpis()
         elif page == "consumer_kpis":
             from pages_extra import page_consumer_kpis
             page_consumer_kpis()
