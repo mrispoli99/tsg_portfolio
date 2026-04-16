@@ -2825,25 +2825,7 @@ def page_flags_alerts():
 
                     # --- Macro & News inline ---
                     with st.expander("Macro & News", expanded=False):
-                        try:
-                            from db import load_news
-                            news_df = load_news(cname)
-                            if news_df is not None and not news_df.empty:
-                                for _, nrow in news_df.head(3).iterrows():
-                                    pub   = str(nrow.get("published", ""))[:10]
-                                    ntitle = nrow.get("title", "")
-                                    link  = nrow.get("link", "#")
-                                    src   = nrow.get("source", "")
-                                    st.markdown(
-                                        f"**[{ntitle}]({link})**  \n"
-                                        f'<span style="font-size:10px;color:{SLATE};">'
-                                        f"{src} · {pub}</span>",
-                                        unsafe_allow_html=True
-                                    )
-                            else:
-                                st.caption("No recent news. Run news_pipeline.py to fetch articles.")
-                        except Exception:
-                            st.caption("News unavailable.")
+                        st.caption("News feed coming soon.")
 
                     # --- AI Summary ---
                     ai_col, btn_col = st.columns([4, 1])
@@ -3001,8 +2983,8 @@ def page_flags_alerts():
                         if st.button("Generate AI Summary", key=f"gen_ai_kpi_{company_sel}",
                                       use_container_width=True):
                             try:
-                                from ai import ask_claude, build_company_context_with_news
-                                ctx  = build_company_context_with_news(company_sel)
+                                from ai import ask_claude, build_company_context
+                                ctx  = build_company_context(company_sel)
                                 resp = ask_claude(
                                     f"Write a 3-bullet analysis of {company_sel}'s credit "
                                     f"and operating performance based on the KPI flags. "
@@ -3260,10 +3242,10 @@ def render_ai_panel():
 
     # Build context based on current page
     try:
-        from ai import (build_portfolio_context_with_news,
-                        build_company_context_with_news, ask_claude)
+        from ai import (build_portfolio_context,
+                        build_company_context, ask_claude)
         if page == "company_detail" and company:
-            context     = build_company_context_with_news(company)
+            context     = build_company_context(company)
             placeholder = f"Ask about {company}..."
             suggested   = [
                 f"Summarize {company} in 3 bullets",
@@ -3271,7 +3253,7 @@ def render_ai_panel():
                 f"Write a board update for {company}",
             ]
         else:
-            context     = build_portfolio_context_with_news()
+            context     = build_portfolio_context()
             placeholder = "Ask about the portfolio..."
             suggested   = [
                 "Which companies have the highest leverage?",
