@@ -441,9 +441,11 @@ def _render_ai_summary(company: str, df: pd.DataFrame,
         "data you have been provided. Rules you must follow:\n"
         "1. Never invent, estimate, or guess any number not explicitly in the data.\n"
         "2. If a metric is not in the data, say 'not available' — do not substitute or infer.\n"
-        "3. Be concise and factual. Use bullet points for summaries.\n"
-        "4. When referencing numbers, always cite the period they relate to.\n"
-        "5. Do not make forward-looking statements unless asked and only based on visible trends."
+        "3. Be concise and factual. Use plain bullet points only — no headers, no markdown "
+        "code formatting, no backticks, no bold text. Just plain text bullets.\n"
+        "4. Write dollar values as '$X.XM' or '$X.XB' — never use backticks around numbers.\n"
+        "5. When referencing numbers, always cite the period they relate to.\n"
+        "6. Do not make forward-looking statements unless asked and only based on visible trends."
     )
 
     context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
@@ -471,12 +473,12 @@ def _render_ai_summary(company: str, df: pd.DataFrame,
     # ── Display summary ───────────────────────────────────────────────────────
     summary = st.session_state.get(session_key, "")
     if summary:
-        st.markdown(f"""
-        <div style="background:#F7F8FA; border-left:3px solid #4A6FA5;
-                    border-radius:4px; padding:14px 18px; margin-bottom:16px;
-                    font-size:13px; color:#1B2A4A; font-family:Arial;
-                    line-height:1.7; white-space:pre-line;">{summary}</div>
-        """, unsafe_allow_html=True)
+        # Strip any accidental markdown headers Claude may have added
+        cleaned = "\n".join(
+            line for line in summary.splitlines()
+            if not line.strip().startswith("#")
+        ).strip()
+        st.markdown(cleaned)
 
     # ── Refresh button ────────────────────────────────────────────────────────
     ref_col, _ = st.columns([1, 5])
@@ -491,16 +493,13 @@ def _render_ai_summary(company: str, df: pd.DataFrame,
     # Show prior follow-ups (skip the auto-generated summary exchange)
     for msg in st.session_state[chat_key][2:]:
         if msg["role"] == "user":
-            st.markdown(
-                f'<div style="background:#EBF2FB;border-radius:6px;padding:8px 12px;'
-                f'margin:6px 0;font-size:13px;font-family:Arial;color:#1B2A4A;">'
-                f'{msg["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(f"> {msg['content']}")
         else:
-            st.markdown(
-                f'<div style="background:white;border:0.5px solid #E0E4EA;border-radius:6px;'
-                f'padding:8px 12px;margin:6px 0;font-size:13px;font-family:Arial;'
-                f'color:#1B2A4A;line-height:1.7;white-space:pre-line;">'
-                f'{msg["content"]}</div>', unsafe_allow_html=True)
+            cleaned = "\n".join(
+                line for line in msg["content"].splitlines()
+                if not line.strip().startswith("#")
+            ).strip()
+            st.markdown(cleaned)
 
     user_q = st.chat_input(
         f"Ask about {company}'s KPIs...",
