@@ -168,10 +168,67 @@ def page_consumer_kpis():
 # Company News Section (used inside Company Detail)
 # ---------------------------------------------------------------------------
 
-def render_news_section(company_name: str):
-    st.markdown(f'<div class="section-header">Recent News — {company_name}</div>',
-                unsafe_allow_html=True)
+def _news_ai_digest(company_name: str, news_df: pd.DataFrame) -> None:
+    """Generate and display a Claude-powered digest of all news for this company.
+    Uses session state to cache the result so it doesn't regenerate on every rerender.
+    """
+    digest_key = f"news_digest_{company_name}"
+    regen_key  = f"news_digest_regen_{company_name}"
 
+    # Build the news context string from ai_summaries (preferred) or titles
+    headlines = []
+    for _, row in news_df.iterrows():
+        pub        = str(row.get("published", ""))[:10]
+        title      = row.get("title", "")
+        ai_summary = str(row.get("ai_summary", "") or "")
+        news_type  = str(row.get("news_type", "company") or "company")
+        tag        = f"[Industry — {row.get('sector_tag','')}]" if news_type == "industry" else "[Company]"
+        body       = ai_summary if ai_summary and ai_summary != "nan" else title
+        headlines.append(f"- {tag} [{pub}] {body}")
+
+    news_context = "\n".join(headlines)
+
+    # Generate digest if not cached or regen requested
+    if digest_key not in st.session_state or st.session_state.get(regen_key):
+        st.session_state.pop(regen_key, None)
+        with st.spinner("Generating news digest..."):
+            try:
+                prompt = (
+                    f"You are a PE portfolio analyst. Based only on the news items below for {company_name}, "
+                    f"write a concise 3–5 sentence analyst digest. Lead with the most financially significant "
+                    f"development, note any industry headwinds or tailwinds, and flag anything that warrants "
+                    f"monitoring. Do not invent facts not present in the headlines. Be direct and factual.\n\n"
+                    f"NEWS ITEMS:\n{news_context}"
+                )
+                digest = ask_claude(prompt, "", [])
+                st.session_state[digest_key] = digest
+            except Exception as e:
+                st.session_state[digest_key] = f"Could not generate digest: {e}"
+
+    digest = st.session_state.get(digest_key, "")
+    if digest:
+        st.markdown(f"""
+        <div style="background:{LIGHT_BG}; border:1px solid {BORDER}; border-left:4px solid {NAVY};
+                    border-radius:6px; padding:14px 18px; margin-bottom:16px;">
+            <div style="font-size:11px; font-weight:600; color:{SLATE}; font-family:Arial;
+                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+                🤖 AI News Digest
+            </div>
+            <div style="font-size:13px; color:{NAVY}; font-family:Arial; line-height:1.6;">
+                {digest}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    col_regen, _ = st.columns([1, 5])
+    with col_regen:
+        if st.button("↺ Regenerate digest", key=f"regen_digest_{company_name}",
+                     use_container_width=True):
+            st.session_state[regen_key] = True
+            st.rerun()
+
+
+def render_news_section(company_name: str):
     try:
         news_df = load_news(company_name)
     except Exception as exc:
@@ -179,32 +236,92 @@ def render_news_section(company_name: str):
         return
 
     if news_df is None or (hasattr(news_df, "empty") and news_df.empty):
-        st.info(f"No recent news found for {company_name}.")
-        st.caption("To enable news: run news_pipeline.py on your VM, "
-                   "then re-export CSVs with export_to_csv.py.")
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:20px 24px; margin-bottom:16px;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
+                        margin-bottom:4px;">📰 Company News</div>
+            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
+                No recent news found for {company_name}. Run news_pipeline.py to populate.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
+    # Sort by published date descending
+    if "published" in news_df.columns:
+        news_df = news_df.sort_values("published", ascending=False)
+
+    # ── AI digest ─────────────────────────────────────────────────────────────
+    _news_ai_digest(company_name, news_df)
+
+    # ── Article count summary ─────────────────────────────────────────────────
+    n_company  = (news_df.get("news_type", pd.Series(["company"] * len(news_df))) == "company").sum()
+    n_industry = (news_df.get("news_type", pd.Series([])) == "industry").sum()
+    counts = f"{n_company} company article{'s' if n_company != 1 else ''}"
+    if n_industry:
+        counts += f" · {n_industry} industry article{'s' if n_industry != 1 else ''}"
+    st.caption(counts)
+
+    # ── Article cards ──────────────────────────────────────────────────────────
     for _, row in news_df.iterrows():
-        pub = str(row.get("published", ""))[:10]
-        title   = row.get("title", "")
-        summary = row.get("summary", "")
-        link    = row.get("link", "")
-        source  = row.get("source", "")
+        pub        = str(row.get("published", ""))[:10]
+        title      = row.get("title", "No title")
+        ai_summary = str(row.get("ai_summary", "") or "").strip()
+        link       = row.get("link", "#")
+        source     = row.get("source", "")
+        news_type  = str(row.get("news_type", "company") or "company")
+        sector_tag = str(row.get("sector_tag", "") or "")
+
+        # Strip "nan" strings that come through from CSV
+        if ai_summary in ("nan", "None", ""):
+            ai_summary = ""
+        if sector_tag in ("nan", "None"):
+            sector_tag = ""
+
+        # Visual distinction: company = navy left border, industry = amber left border
+        is_industry   = (news_type == "industry")
+        border_color  = XANTHOUS if is_industry else SLATE
+        type_badge    = (
+            f'<span style="background:{XANTHOUS}22; color:#8a6700; font-size:10px; '
+            f'font-weight:600; font-family:Arial; padding:2px 7px; border-radius:3px; '
+            f'margin-right:6px;">🏭 Industry</span>'
+            if is_industry else ""
+        )
+        sector_label  = (
+            f'<span style="font-size:10px; color:{SLATE}; font-family:Arial;"> — {sector_tag}</span>'
+            if is_industry and sector_tag else ""
+        )
+
+        # Display ai_summary if available, otherwise fall back to nothing (title is already shown)
+        body_html = ""
+        if ai_summary:
+            body_html = f"""
+            <div style="font-size:12px; color:{NAVY}; font-family:Arial;
+                        line-height:1.5; margin-top:6px;">
+                {ai_summary}
+            </div>"""
 
         st.markdown(f"""
-        <div style="background:white; border:1px solid {BORDER}; border-left:3px solid {SLATE};
+        <div style="background:white; border:1px solid {BORDER};
+                    border-left:3px solid {border_color};
                     border-radius:4px; padding:10px 14px; margin-bottom:8px;">
             <div style="display:flex; justify-content:space-between; align-items:start;">
-                <a href="{link}" target="_blank"
-                   style="font-size:13px; font-weight:600; color:{NAVY};
-                          font-family:Arial; text-decoration:none;">
-                    {title}
-                </a>
-                <span style="font-size:10px; color:{SLATE}; font-family:Arial;
-                             white-space:nowrap; margin-left:12px;">{pub}</span>
-            </div>
-            <div style="font-size:11px; color:{SLATE}; font-family:Arial; margin-top:4px;">
-                {source} {"— " + summary[:150] + "..." if summary else ""}
+                <div style="flex:1;">
+                    {type_badge}{sector_label}
+                    <div style="margin-top:{"4px" if is_industry else "0"};">
+                        <a href="{link}" target="_blank"
+                           style="font-size:13px; font-weight:600; color:{NAVY};
+                                  font-family:Arial; text-decoration:none;">
+                            {title}
+                        </a>
+                    </div>
+                    {body_html}
+                </div>
+                <div style="text-align:right; white-space:nowrap; margin-left:12px; flex-shrink:0;">
+                    <div style="font-size:10px; color:{SLATE}; font-family:Arial;">{pub}</div>
+                    <div style="font-size:10px; color:{SLATE}; font-family:Arial; margin-top:2px;">{source}</div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -997,21 +1114,14 @@ def page_company_detail_enhanced():
             <div style="background:{LIGHT_BG}; border-left:3px solid {SLATE};
                         border-radius:4px; padding:10px 14px; margin-bottom:12px;
                         font-size:12px; color:{NAVY}; font-family:Arial;">
-                <b>Sector:</b> {macro_sector} —
-                Macro data integration (CapIQ comps, sector benchmarks) coming soon.
+                <b>Sector:</b> {macro_sector}
             </div>
             """, unsafe_allow_html=True)
-        # News — coming soon
-        st.markdown(f"""
-        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
-                    padding:20px 24px; margin-bottom:16px;">
-            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
-                        margin-bottom:4px;">📰 Company News</div>
-            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
-                News feed coming soon.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+
+        # News feed
+        st.markdown('<div class="section-header">📰 Recent News</div>',
+                    unsafe_allow_html=True)
+        render_news_section(selected)
 
     with tab6:
         if info_row is None:
