@@ -279,52 +279,52 @@ def render_news_section(company_name: str):
         if sector_tag in ("nan", "None"):
             sector_tag = ""
 
-        # Visual distinction: company = navy left border, industry = amber left border
-        is_industry   = (news_type == "industry")
-        border_color  = XANTHOUS if is_industry else SLATE
-        type_badge    = (
-            f'<span style="background:{XANTHOUS}22; color:#8a6700; font-size:10px; '
-            f'font-weight:600; font-family:Arial; padding:2px 7px; border-radius:3px; '
-            f'margin-right:6px;">🏭 Industry</span>'
-            if is_industry else ""
-        )
-        sector_label  = (
-            f'<span style="font-size:10px; color:{SLATE}; font-family:Arial;"> — {sector_tag}</span>'
-            if is_industry and sector_tag else ""
+        # Visual distinction: company = slate left border, industry = amber left border
+        is_industry  = (news_type == "industry")
+        border_color = XANTHOUS if is_industry else SLATE
+
+        # Build sub-HTML as plain Python strings — no ternaries inside f-string HTML blocks
+        if is_industry:
+            type_badge = (
+                f'<span style="background:#FFF3C4; color:#8a6700; font-size:10px; '
+                f'font-weight:600; font-family:Arial; padding:2px 7px; border-radius:3px; '
+                f'margin-right:6px;">&#127981; Industry</span>'
+            )
+            sl = f' &#8212; {sector_tag}' if sector_tag else ""
+            badge_row = (
+                f'<div style="margin-bottom:4px;">{type_badge}'
+                f'<span style="font-size:10px; color:{SLATE}; font-family:Arial;">{sl}</span>'
+                f'</div>'
+            )
+        else:
+            badge_row = ""
+
+        body_html = (
+            f'<div style="font-size:12px; color:{NAVY}; font-family:Arial; '
+            f'line-height:1.5; margin-top:6px;">{ai_summary}</div>'
+            if ai_summary else ""
         )
 
-        # Display ai_summary if available, otherwise fall back to nothing (title is already shown)
-        body_html = ""
-        if ai_summary:
-            body_html = f"""
-            <div style="font-size:12px; color:{NAVY}; font-family:Arial;
-                        line-height:1.5; margin-top:6px;">
-                {ai_summary}
-            </div>"""
-
-        st.markdown(f"""
-        <div style="background:white; border:1px solid {BORDER};
-                    border-left:3px solid {border_color};
-                    border-radius:4px; padding:10px 14px; margin-bottom:8px;">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
-                <div style="flex:1;">
-                    {type_badge}{sector_label}
-                    <div style="margin-top:{"4px" if is_industry else "0"};">
-                        <a href="{link}" target="_blank"
-                           style="font-size:13px; font-weight:600; color:{NAVY};
-                                  font-family:Arial; text-decoration:none;">
-                            {title}
-                        </a>
-                    </div>
-                    {body_html}
-                </div>
-                <div style="text-align:right; white-space:nowrap; margin-left:12px; flex-shrink:0;">
-                    <div style="font-size:10px; color:{SLATE}; font-family:Arial;">{pub}</div>
-                    <div style="font-size:10px; color:{SLATE}; font-family:Arial; margin-top:2px;">{source}</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="background:white; border:1px solid {BORDER};'
+            f'border-left:3px solid {border_color};'
+            f'border-radius:4px; padding:10px 14px; margin-bottom:8px;">'
+            f'<div style="display:flex; justify-content:space-between; align-items:start;">'
+            f'<div style="flex:1;">'
+            f'{badge_row}'
+            f'<a href="{link}" target="_blank"'
+            f' style="font-size:13px; font-weight:600; color:{NAVY};'
+            f' font-family:Arial; text-decoration:none;">{title}</a>'
+            f'{body_html}'
+            f'</div>'
+            f'<div style="text-align:right; white-space:nowrap; margin-left:12px; flex-shrink:0;">'
+            f'<div style="font-size:10px; color:{SLATE}; font-family:Arial;">{pub}</div>'
+            f'<div style="font-size:10px; color:{SLATE}; font-family:Arial; margin-top:2px;">{source}</div>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
