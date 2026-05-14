@@ -137,23 +137,6 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
     # Zero line
     fig.add_hline(y=0, line_width=1.5, line_color=SLATE)
 
-    # Underwriting targets — dashed step line (only shown on full history)
-    if _full and len(UNDERWRITING_TARGETS) > 0:
-        uw_x, uw_y = [], []
-        for ts, v in UNDERWRITING_TARGETS:
-            lbl = ts.strftime("%b-%y")
-            if lbl in labels:
-                uw_x.append(lbl)
-                uw_y.append(v)
-        if uw_x:
-            fig.add_trace(go.Scatter(
-                x=uw_x, y=uw_y,
-                mode="markers+lines",
-                line=dict(color=XANTHOUS, dash="dash", width=1.8),
-                marker=dict(size=7, color=XANTHOUS, symbol="diamond"),
-                name="TSG Underwriting Case",
-            ))
-
     # Key annotations
     _trough_row = ttm_q.loc[ttm_q["ttm_ebitda"].idxmin()]
     _latest_row = ttm_q.iloc[-1]
@@ -185,6 +168,7 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
                 ay=-36, ax=0,
             )
 
+    # Remove underwriting overlay — no longer shown
     fig.update_layout(
         height=420,
         plot_bgcolor="white",
@@ -212,29 +196,134 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption(
         "TTM = trailing twelve months (rolling 12-month sum of monthly Management EBITDA). "
-        "Plotted at quarter-ends. Dashed line = TSG underwriting case targets."
+        "Plotted at quarter-ends. Note: this chart always uses monthly data."
     )
+
+    # ── Data table below chart ────────────────────────────────────────────────
+    # Mirrors the format from Michelle's email:
+    #   Row 1: TTM TSG Underwriting Case Adj. EBITDA ($M) — placeholder, always blank
+    #   Row 2: TTM Cash Revenue ($M)                      — rolling 12m Member Cash Revenue
+    #   Row 3: TTM Adj. EBITDA Margin %                   — rolling 12m Mgmt EBITDA / Revenue
+    #   Row 4: Net Debt ($M)                              — from financials_quarterly
+
+    # Build quarterly time series for the table columns (same x-axis as chart)
+    _monthly = kpis_df[kpis_df["period"] == "Monthly"].copy()
+
+    # TTM Cash Revenue — rolling 12m sum of Member Cash Revenue
+    _mcr = (_monthly[_monthly["attribute_name"] == "Member Cash Revenue"]
+            .sort_values("cash_flow_date")
+            .set_index("cash_flow_date")["true_up_value"])
+    _mcr_ttm = _mcr.rolling(12, min_periods=12).sum()
+
+    # TTM Revenue (for margin calc) — rolling 12m Total Studio Revenue
+    _rev = (_monthly[_monthly["attribute_name"] == "Total Studio Revenue"]
+            .sort_values("cash_flow_date")
+            .set_index("cash_flow_date")["true_up_value"])
+    _rev_ttm = _rev.rolling(12, min_periods=12).sum()
+
+    # TTM EBITDA margin — Mgmt EBITDA TTM / Revenue TTM
+    _ebitda = (_monthly[_monthly["attribute_name"] == "Management EBITDA"]
+               .sort_values("cash_flow_date")
+               .set_index("cash_flow_date")["true_up_value"])
+    _ebitda_ttm = _ebitda.rolling(12, min_periods=12).sum()
+    _margin_ttm = (_ebitda_ttm / _rev_ttm * 100).where(_rev_ttm > 0)
+
+    # Net Debt — from the kpis_df quarterly column (passed via financials_quarterly merge)
+    # Use Net Debt (Global) monthly attribute if available
+    _nd = (_monthly[_monthly["attribute_name"] == "Net Debt (Global)"]
+           .sort_values("cash_flow_date")
+           .set_index("cash_flow_date")["true_up_value"])
+
+    def _fmt_m(v):
+        """Format as integer $M or blank."""
+        try:
+            f = float(v)
+            if pd.isna(f):
+                return ""
+            return f"{f:.0f}"
+        except Exception:
+            return ""
+
+    def _fmt_pct(v):
+        try:
+            f = float(v)
+            if pd.isna(f):
+                return ""
+            return f"{f:.0f}%"
+        except Exception:
+            return ""
+
+    # Build table — one column per quarter-end in the chart
+    _col_labels = ttm_q["label"].tolist()
+    _col_dates  = ttm_q["cash_flow_date"].tolist()
+
+    def _nearest(series, date):
+        """Get the series value at or before the given date."""
+        sub = series[series.index <= date]
+        return sub.iloc[-1] if not sub.empty else float("nan")
+
+    _rows = [
+        ("TTM TSG Underwriting Case Adj. EBITDA ($M)", [""] * len(_col_dates)),  # always blank
+        ("TTM Cash Revenue ($M)",    [_fmt_m(_nearest(_mcr_ttm,    d)) for d in _col_dates]),
+        ("TTM Adj. EBITDA Margin %", [_fmt_pct(_nearest(_margin_ttm, d)) for d in _col_dates]),
+        ("Net Debt ($M)",            [_fmt_m(_nearest(_nd,          d)) for d in _col_dates]),
+    ]
+
+    # Render as a styled HTML table matching the board-deck format
+    _header_cells = "".join(
+        f'<th style="padding:5px 10px; font-size:10px; font-weight:600; color:{NAVY}; '
+        f'text-align:center; border-bottom:2px solid {NAVY}; white-space:nowrap;">{lbl}</th>'
+        for lbl in _col_labels
+    )
+    _table_html = f"""
+    <div style="overflow-x:auto; margin-top:4px;">
+    <table style="width:100%; border-collapse:collapse; font-family:Arial; font-size:11px;">
+        <thead>
+            <tr>
+                <th style="padding:5px 10px; font-size:10px; font-weight:600; color:{NAVY};
+                           text-align:left; border-bottom:2px solid {NAVY}; min-width:240px;">
+                </th>
+                {_header_cells}
+            </tr>
+        </thead>
+        <tbody>
+    """
+    for _ri, (_row_label, _row_vals) in enumerate(_rows):
+        _bg     = "#F8F9FA" if _ri % 2 == 0 else "white"
+        _italic = " font-style:italic; color:#AAAAAA;" if _row_label.startswith("TTM TSG") else ""
+        _cells  = "".join(
+            f'<td style="padding:5px 10px; text-align:center; border-bottom:1px solid {BORDER};'
+            f'color:{SLATE};">{v}</td>'
+            for v in _row_vals
+        )
+        _table_html += (
+            f'<tr style="background:{_bg};">'
+            f'<td style="padding:5px 10px; font-weight:500; color:{NAVY};{_italic}'
+            f'border-bottom:1px solid {BORDER};">{_row_label}</td>'
+            f'{_cells}</tr>'
+        )
+    _table_html += "</tbody></table></div>"
+    st.markdown(_table_html, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
 # Chart 2 — Monthly Revenue Mix (Stacked Bar)
 # ---------------------------------------------------------------------------
 
-def render_revenue_mix(kpis_df: pd.DataFrame):
+def render_revenue_mix(kpis_df: pd.DataFrame, period_mode: str = "Quarterly"):
     """
-    Stacked monthly bar chart breaking revenue into:
-      - Yoga / Member revenue (bottom, navy)
-      - Non-Member Cash Revenue (middle, sky blue)
-      - Retail (light, celadon)
-      - Franchise & Royalties (top, xanthous)
-    Secondary axis: Total Studio Revenue as a line for cross-check.
+    Stacked bar chart breaking revenue into segments.
+    period_mode controls whether Monthly, Quarterly, or Annual rows are used.
     """
     st.markdown(
-        '<div class="section-header-co">Monthly Revenue Mix</div>',
+        f'<div class="section-header-co">{period_mode} Revenue Mix</div>',
         unsafe_allow_html=True,
     )
 
-    monthly = kpis_df[kpis_df["period"] == "Monthly"].copy()
+    # Map period_mode to the period tag used in company_kpis.csv
+    _period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly", "Annual": "Annual"}
+    _period_tag = _period_map.get(period_mode, "Quarterly")
+    monthly = kpis_df[kpis_df["period"] == _period_tag].copy()
 
     _SEGMENTS = [
         ("Yoga",                    "Yoga",                     NAVY,     0.90),
@@ -298,7 +387,10 @@ def render_revenue_mix(kpis_df: pd.DataFrame):
         )
 
     # Total Studio Revenue as a line overlay
-    total_sub = monthly[monthly["attribute_name"] == "Total Studio Revenue"].set_index("cash_flow_date")["true_up_value"]
+    total_sub = kpis_df[
+        (kpis_df["period"] == _period_tag) &
+        (kpis_df["attribute_name"] == "Total Studio Revenue")
+    ].set_index("cash_flow_date")["true_up_value"]
     total_sub = total_sub[
         (total_sub.index >= wide.index.min()) &
         (total_sub.index <= wide.index.max())
@@ -346,20 +438,19 @@ def render_revenue_mix(kpis_df: pd.DataFrame):
 # Chart 3 — Studio-Level P&L Waterfall
 # ---------------------------------------------------------------------------
 
-def render_studio_pl_waterfall(kpis_df: pd.DataFrame):
+def render_studio_pl_waterfall(kpis_df: pd.DataFrame, period_mode: str = "Quarterly"):
     """
-    Waterfall chart for a single selected month showing the studio P&L bridge:
-    Total Studio Revenue → Labor → Occupancy → Programming → Other OpEx
-    → Regional OH → = Studio Contribution
-
-    Bars: revenue/totals = navy, cost deductions = red, result = sea green.
+    Waterfall chart for a single selected period showing the studio P&L bridge.
+    period_mode controls which period granularity is used.
     """
     st.markdown(
         '<div class="section-header-co">Studio-Level P&L Waterfall</div>',
         unsafe_allow_html=True,
     )
 
-    monthly = kpis_df[kpis_df["period"] == "Monthly"].copy()
+    _period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly", "Annual": "Annual"}
+    _period_tag = _period_map.get(period_mode, "Quarterly")
+    monthly = kpis_df[kpis_df["period"] == _period_tag].copy()
 
     # Available periods that have all required attributes
     _REQUIRED = [
@@ -392,14 +483,13 @@ def render_studio_pl_waterfall(kpis_df: pd.DataFrame):
     # Period selector — default to latest
     _sel_col, _ = st.columns([2, 5])
     with _sel_col:
-        # Show human-readable labels
         _period_labels = {
             d: pd.Timestamp(d).strftime("%B %Y") for d in _req_dates
         }
         _selected_period_label = st.selectbox(
-            "Period",
-            options=list(_period_labels.values())[::-1],  # newest first
-            key="cpy_waterfall_period",
+            f"Select {period_mode} period",
+            options=list(_period_labels.values())[::-1],
+            key=f"cpy_waterfall_period_{period_mode}",
             label_visibility="collapsed",
         )
     # Map back to date string
@@ -572,11 +662,12 @@ def render_studio_pl_waterfall(kpis_df: pd.DataFrame):
 # Master render function — called from pages_extra tab2
 # ---------------------------------------------------------------------------
 
-def render_corepower_visuals(kpis_df: pd.DataFrame):
+def render_corepower_visuals(kpis_df: pd.DataFrame, period_mode: str = "Quarterly"):
     """
     Entry point: renders all three Core Power bespoke charts in sequence.
     kpis_df should be the full company_kpis_all() DataFrame
     already filtered to Core Power (or the full dataset — filtering is done here).
+    period_mode: "Monthly" | "Quarterly" | "Annual"
     """
     # Ensure we only have Core Power data
     if "company_name" in kpis_df.columns:
@@ -609,8 +700,9 @@ def render_corepower_visuals(kpis_df: pd.DataFrame):
         unsafe_allow_html=True,
     )
 
+    # TTM EBITDA always uses monthly data — TTM rolling sum requires monthly granularity
     render_ttm_ebitda_since_investment(kpis_df)
     st.markdown("<hr style='border-color:#E0E4EA; margin:24px 0;'>", unsafe_allow_html=True)
-    render_revenue_mix(kpis_df)
+    render_revenue_mix(kpis_df, period_mode)
     st.markdown("<hr style='border-color:#E0E4EA; margin:24px 0;'>", unsafe_allow_html=True)
-    render_studio_pl_waterfall(kpis_df)
+    render_studio_pl_waterfall(kpis_df, period_mode)
