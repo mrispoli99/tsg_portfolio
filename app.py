@@ -415,7 +415,7 @@ PAGES = [
     ("Portfolio",           "portfolio_overview"),
     ("Fund – Coming Soon",  "fund_summary"),
     ("Companies",           "company_detail"),
-    ("Company KPIs",        "company_kpis"),
+    ("Company-Specific Analysis", "company_kpis"),
     ("KPI Metric Alerts",   "flags_alerts"),
     ("SOP & Trainings",     "sop_training"),
     ("Data Export",         "export_ppt"),

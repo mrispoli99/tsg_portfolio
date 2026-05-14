@@ -168,67 +168,10 @@ def page_consumer_kpis():
 # Company News Section (used inside Company Detail)
 # ---------------------------------------------------------------------------
 
-def _news_ai_digest(company_name: str, news_df: pd.DataFrame) -> None:
-    """Generate and display a Claude-powered digest of all news for this company.
-    Uses session state to cache the result so it doesn't regenerate on every rerender.
-    """
-    digest_key = f"news_digest_{company_name}"
-    regen_key  = f"news_digest_regen_{company_name}"
-
-    # Build the news context string from ai_summaries (preferred) or titles
-    headlines = []
-    for _, row in news_df.iterrows():
-        pub        = str(row.get("published", ""))[:10]
-        title      = row.get("title", "")
-        ai_summary = str(row.get("ai_summary", "") or "")
-        news_type  = str(row.get("news_type", "company") or "company")
-        tag        = f"[Industry — {row.get('sector_tag','')}]" if news_type == "industry" else "[Company]"
-        body       = ai_summary if ai_summary and ai_summary != "nan" else title
-        headlines.append(f"- {tag} [{pub}] {body}")
-
-    news_context = "\n".join(headlines)
-
-    # Generate digest if not cached or regen requested
-    if digest_key not in st.session_state or st.session_state.get(regen_key):
-        st.session_state.pop(regen_key, None)
-        with st.spinner("Generating news digest..."):
-            try:
-                prompt = (
-                    f"You are a PE portfolio analyst. Based only on the news items below for {company_name}, "
-                    f"write a concise 3–5 sentence analyst digest. Lead with the most financially significant "
-                    f"development, note any industry headwinds or tailwinds, and flag anything that warrants "
-                    f"monitoring. Do not invent facts not present in the headlines. Be direct and factual.\n\n"
-                    f"NEWS ITEMS:\n{news_context}"
-                )
-                digest = ask_claude(prompt, "", [])
-                st.session_state[digest_key] = digest
-            except Exception as e:
-                st.session_state[digest_key] = f"Could not generate digest: {e}"
-
-    digest = st.session_state.get(digest_key, "")
-    if digest:
-        st.markdown(f"""
-        <div style="background:{LIGHT_BG}; border:1px solid {BORDER}; border-left:4px solid {NAVY};
-                    border-radius:6px; padding:14px 18px; margin-bottom:16px;">
-            <div style="font-size:11px; font-weight:600; color:{SLATE}; font-family:Arial;
-                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
-                🤖 AI News Digest
-            </div>
-            <div style="font-size:13px; color:{NAVY}; font-family:Arial; line-height:1.6;">
-                {digest}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    col_regen, _ = st.columns([1, 5])
-    with col_regen:
-        if st.button("↺ Regenerate digest", key=f"regen_digest_{company_name}",
-                     use_container_width=True):
-            st.session_state[regen_key] = True
-            st.rerun()
-
-
 def render_news_section(company_name: str):
+    st.markdown(f'<div class="section-header">Recent News — {company_name}</div>',
+                unsafe_allow_html=True)
+
     try:
         news_df = load_news(company_name)
     except Exception as exc:
@@ -236,95 +179,35 @@ def render_news_section(company_name: str):
         return
 
     if news_df is None or (hasattr(news_df, "empty") and news_df.empty):
+        st.info(f"No recent news found for {company_name}.")
+        st.caption("To enable news: run news_pipeline.py on your VM, "
+                   "then re-export CSVs with export_to_csv.py.")
+        return
+
+    for _, row in news_df.iterrows():
+        pub = str(row.get("published", ""))[:10]
+        title   = row.get("title", "")
+        summary = row.get("summary", "")
+        link    = row.get("link", "")
+        source  = row.get("source", "")
+
         st.markdown(f"""
-        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
-                    padding:20px 24px; margin-bottom:16px;">
-            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
-                        margin-bottom:4px;">📰 Company News</div>
-            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
-                No recent news found for {company_name}. Run news_pipeline.py to populate.
+        <div style="background:white; border:1px solid {BORDER}; border-left:3px solid {SLATE};
+                    border-radius:4px; padding:10px 14px; margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:start;">
+                <a href="{link}" target="_blank"
+                   style="font-size:13px; font-weight:600; color:{NAVY};
+                          font-family:Arial; text-decoration:none;">
+                    {title}
+                </a>
+                <span style="font-size:10px; color:{SLATE}; font-family:Arial;
+                             white-space:nowrap; margin-left:12px;">{pub}</span>
+            </div>
+            <div style="font-size:11px; color:{SLATE}; font-family:Arial; margin-top:4px;">
+                {source} {"— " + summary[:150] + "..." if summary else ""}
             </div>
         </div>
         """, unsafe_allow_html=True)
-        return
-
-    # Sort by published date descending
-    if "published" in news_df.columns:
-        news_df = news_df.sort_values("published", ascending=False)
-
-    # ── AI digest ─────────────────────────────────────────────────────────────
-    _news_ai_digest(company_name, news_df)
-
-    # ── Article count summary ─────────────────────────────────────────────────
-    n_company  = (news_df.get("news_type", pd.Series(["company"] * len(news_df))) == "company").sum()
-    n_industry = (news_df.get("news_type", pd.Series([])) == "industry").sum()
-    counts = f"{n_company} company article{'s' if n_company != 1 else ''}"
-    if n_industry:
-        counts += f" · {n_industry} industry article{'s' if n_industry != 1 else ''}"
-    st.caption(counts)
-
-    # ── Article cards ──────────────────────────────────────────────────────────
-    for _, row in news_df.iterrows():
-        pub        = str(row.get("published", ""))[:10]
-        title      = row.get("title", "No title")
-        ai_summary = str(row.get("ai_summary", "") or "").strip()
-        link       = row.get("link", "#")
-        source     = row.get("source", "")
-        news_type  = str(row.get("news_type", "company") or "company")
-        sector_tag = str(row.get("sector_tag", "") or "")
-
-        # Strip "nan" strings that come through from CSV
-        if ai_summary in ("nan", "None", ""):
-            ai_summary = ""
-        if sector_tag in ("nan", "None"):
-            sector_tag = ""
-
-        # Visual distinction: company = slate left border, industry = amber left border
-        is_industry  = (news_type == "industry")
-        border_color = XANTHOUS if is_industry else SLATE
-
-        # Build sub-HTML as plain Python strings — no ternaries inside f-string HTML blocks
-        if is_industry:
-            type_badge = (
-                f'<span style="background:#FFF3C4; color:#8a6700; font-size:10px; '
-                f'font-weight:600; font-family:Arial; padding:2px 7px; border-radius:3px; '
-                f'margin-right:6px;">&#127981; Industry</span>'
-            )
-            sl = f' &#8212; {sector_tag}' if sector_tag else ""
-            badge_row = (
-                f'<div style="margin-bottom:4px;">{type_badge}'
-                f'<span style="font-size:10px; color:{SLATE}; font-family:Arial;">{sl}</span>'
-                f'</div>'
-            )
-        else:
-            badge_row = ""
-
-        body_html = (
-            f'<div style="font-size:12px; color:{NAVY}; font-family:Arial; '
-            f'line-height:1.5; margin-top:6px;">{ai_summary}</div>'
-            if ai_summary else ""
-        )
-
-        st.markdown(
-            f'<div style="background:white; border:1px solid {BORDER};'
-            f'border-left:3px solid {border_color};'
-            f'border-radius:4px; padding:10px 14px; margin-bottom:8px;">'
-            f'<div style="display:flex; justify-content:space-between; align-items:start;">'
-            f'<div style="flex:1;">'
-            f'{badge_row}'
-            f'<a href="{link}" target="_blank"'
-            f' style="font-size:13px; font-weight:600; color:{NAVY};'
-            f' font-family:Arial; text-decoration:none;">{title}</a>'
-            f'{body_html}'
-            f'</div>'
-            f'<div style="text-align:right; white-space:nowrap; margin-left:12px; flex-shrink:0;">'
-            f'<div style="font-size:10px; color:{SLATE}; font-family:Arial;">{pub}</div>'
-            f'<div style="font-size:10px; color:{SLATE}; font-family:Arial; margin-top:2px;">{source}</div>'
-            f'</div>'
-            f'</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +321,209 @@ def render_income_statement(company_name: str, compare_mode: str = "Prior Year")
                          height=min(450, len(rows) * 38 + 40))
 
 
+
+
+# ---------------------------------------------------------------------------
+# Categorized AI Summary for Company-Specific Analysis tab
+# Splits output into Financials / Operational / Liquidity / Financing sections.
+# Operational section always uses manual notes (no 73s data source).
+# ---------------------------------------------------------------------------
+
+def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
+                                   kpi_cards: list, kpi_charts: list):
+    """
+    Render a 4-section AI summary:
+      Financials  — auto-generated from data
+      Operational — manual notes field (no structured data source)
+      Liquidity   — auto-generated from data
+      Financing   — auto-generated from data
+    """
+    try:
+        from page_company_kpis import _build_kpi_context, _fmt
+        from ai import ask_claude
+    except ImportError as e:
+        st.info(f"AI module not available: {e}")
+        return
+
+    session_key   = f"csa_ai_summary_{company}"
+    chat_key      = f"csa_ai_chat_{company}"
+    ops_notes_key = f"csa_ops_notes_{company}"
+
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    SYSTEM = (
+        "You are a private equity analyst at TSG Consumer Partners. "
+        "Analyze ONLY the data explicitly provided. Never invent numbers. "
+        "If a metric is absent, write 'not available'. "
+        "Format dollar values as '$X.XM'. Always cite the period for each data point. "
+        "Respond using plain bullet points — no markdown headers, no bold, no backticks."
+    )
+
+    context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
+
+    # ── Auto-generate on first load ───────────────────────────────────────────
+    if session_key not in st.session_state:
+        with st.spinner("Generating summary..."):
+            try:
+                prompt = (
+                    f"Using only the data provided, write a structured performance summary for "
+                    f"{company}. Separate your response into exactly three clearly labeled sections:\n\n"
+                    f"FINANCIALS:\n"
+                    f"- 2-3 bullets on revenue trajectory, EBITDA, and margin trends\n\n"
+                    f"LIQUIDITY:\n"
+                    f"- 2 bullets on free cash flow, cash balance, and debt service coverage\n\n"
+                    f"FINANCING:\n"
+                    f"- 2 bullets on leverage level, debt composition (fixed vs. floating), "
+                    f"and any notable credit dynamics\n\n"
+                    f"Use only data explicitly in the provided context. "
+                    f"Do not add an Operational section — that is handled separately."
+                )
+                summary = ask_claude(prompt, context + "\n\nSystem: " + SYSTEM, [])
+                st.session_state[session_key] = summary
+                st.session_state[chat_key] = [
+                    {"role": "user",      "content": prompt},
+                    {"role": "assistant", "content": summary},
+                ]
+            except Exception as e:
+                st.session_state[session_key] = f"Could not generate summary: {e}"
+
+    # ── Render the four sections ──────────────────────────────────────────────
+    raw = st.session_state.get(session_key, "")
+
+    # Parse the AI output into sections (looks for FINANCIALS:, LIQUIDITY:, FINANCING:)
+    import re as _re
+    _sections = {"FINANCIALS": "", "LIQUIDITY": "", "FINANCING": ""}
+    _current  = None
+    for _line in raw.splitlines():
+        _stripped = _line.strip()
+        _upper    = _stripped.upper().rstrip(":")
+        if _upper in _sections:
+            _current = _upper
+            continue
+        if _current:
+            _sections[_current] += _line + "\n"
+
+    # If parsing fails (model didn't follow format), dump everything into Financials
+    if not any(_sections.values()):
+        _sections["FINANCIALS"] = raw
+
+    _SECTION_COLORS = {
+        "FINANCIALS":  NAVY,
+        "OPERATIONAL": SEA_GREEN,
+        "LIQUIDITY":   SLATE,
+        "FINANCING":   XANTHOUS,
+    }
+
+    # Financials
+    st.markdown(f"""
+    <div style="border-left:3px solid {_SECTION_COLORS['FINANCIALS']}; padding:8px 14px;
+                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;">
+        <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['FINANCIALS']};
+                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
+                    margin-bottom:6px;">Financials</div>
+        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_sections["FINANCIALS"].strip() or "—"}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Operational — manual notes only
+    st.markdown(f"""
+    <div style="border-left:3px solid {_SECTION_COLORS['OPERATIONAL']}; padding:8px 14px;
+                margin-bottom:6px; background:#F8F9FA; border-radius:0 4px 4px 0;">
+        <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['OPERATIONAL']};
+                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;">
+            Operational
+            <span style="font-size:10px; font-weight:400; color:{SLATE};
+                         text-transform:none; margin-left:8px;">
+                (manual notes — no structured data source)
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _ops_saved = st.session_state.get(ops_notes_key, "")
+    _ops_input = st.text_area(
+        "Operational notes",
+        value=_ops_saved,
+        placeholder=(
+            "Paste or type operational updates here — studio openings, membership trends, "
+            "management changes, partnership updates, etc. "
+            "These notes will be included when regenerating the AI summary."
+        ),
+        height=120,
+        key=f"csa_ops_input_{company}",
+        label_visibility="collapsed",
+    )
+    _save_col, _ = st.columns([1, 6])
+    with _save_col:
+        if st.button("Save Notes", key=f"csa_ops_save_{company}", use_container_width=True):
+            st.session_state[ops_notes_key] = _ops_input
+            # Clear cached AI summary so it regenerates with the new notes
+            st.session_state.pop(session_key, None)
+            st.rerun()
+
+    # Liquidity
+    st.markdown(f"""
+    <div style="border-left:3px solid {_SECTION_COLORS['LIQUIDITY']}; padding:8px 14px;
+                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;
+                margin-top:10px;">
+        <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['LIQUIDITY']};
+                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
+                    margin-bottom:6px;">Liquidity</div>
+        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_sections["LIQUIDITY"].strip() or "—"}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Financing
+    st.markdown(f"""
+    <div style="border-left:3px solid {_SECTION_COLORS['FINANCING']}; padding:8px 14px;
+                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;">
+        <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['FINANCING']};
+                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
+                    margin-bottom:6px;">Financing</div>
+        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_sections["FINANCING"].strip() or "—"}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Regenerate button ─────────────────────────────────────────────────────
+    _reg_col, _ = st.columns([1, 5])
+    with _reg_col:
+        if st.button("↺ Regenerate", key=f"csa_regen_{company}", use_container_width=True):
+            st.session_state.pop(session_key, None)
+            st.rerun()
+
+    # ── Follow-up chat ────────────────────────────────────────────────────────
+    st.caption("Ask follow-up questions — answers are grounded in the data above only.")
+    for _msg in st.session_state[chat_key][2:]:
+        if _msg["role"] == "user":
+            st.markdown(f"> {_msg['content']}")
+        else:
+            st.markdown(_msg["content"])
+
+    _user_q = st.chat_input(
+        f"Ask about {company}…",
+        key=f"csa_chat_input_{company}"
+    )
+    if _user_q:
+        # Inject current operational notes into context for follow-ups
+        _ops_context = ""
+        _saved_ops = st.session_state.get(ops_notes_key, "")
+        if _saved_ops:
+            _ops_context = f"\n\nOPERATIONAL NOTES (manually entered by team):\n{_saved_ops}"
+        st.session_state[chat_key].append({"role": "user", "content": _user_q})
+        with st.spinner("Thinking..."):
+            try:
+                _resp = ask_claude(
+                    _user_q,
+                    context + _ops_context + "\n\nSystem: " + SYSTEM,
+                    st.session_state[chat_key][:-1],
+                )
+            except Exception as _e:
+                _resp = f"Error: {_e}"
+        st.session_state[chat_key].append({"role": "assistant", "content": _resp})
+        st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # Enhanced Company Detail Page
 # ---------------------------------------------------------------------------
@@ -480,23 +566,93 @@ def page_company_detail_enhanced():
     company_info = master[master["company_name"] == selected]
     info_row     = company_info.iloc[0] if len(company_info) > 0 else None
 
-    # Company header card
+    # ── Pull fund summary row for Investment Update card ──────────────────────
+    from db import load_fund_summary, load_ltm_snapshot
+    _fs  = load_fund_summary()
+    _ltm = load_ltm_snapshot()
+    _fs_row  = _fs[_fs["company_name"] == selected].iloc[0]  if len(_fs[_fs["company_name"] == selected])  > 0 else None
+    _ltm_row = _ltm[_ltm["company_name"] == selected].iloc[0] if len(_ltm[_ltm["company_name"] == selected]) > 0 else None
+
+    def _inv_fmt(val, decimals=1):
+        """Format investment values — show as $XM/$XB, or '—' if missing."""
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return "—"
+        try:
+            v = float(val)
+            if abs(v) >= 1000:
+                return f"${v/1000:.{decimals}f}B"
+            return f"${v:.{decimals}f}M"
+        except Exception:
+            return str(val)
+
+    # Investment Update card values
+    _inv_date   = str(info_row.get("investment_date", ""))[:10] if info_row is not None else "—"
+    # Format investment date as "Month YYYY"
+    try:
+        import datetime as _dt
+        _inv_date_fmt = _dt.datetime.strptime(_inv_date, "%Y-%m-%d").strftime("%B %Y")
+    except Exception:
+        _inv_date_fmt = _inv_date
+
+    _total_cost  = _inv_fmt(_ltm_row.get("total_cost") if _ltm_row is not None else None)
+    _security    = info_row.get("security_type", "") if info_row is not None else ""
+    _ownership   = info_row.get("ownership_structure", "") if info_row is not None else ""
+    _fund_own    = _fs_row.get("fund_current_ownership_pct") if _fs_row is not None else None
+    _tsg_own     = _fs_row.get("tsg_controlled_current_pct") if _fs_row is not None else None
+    _struct_str  = str(_security or "").strip()
+    if _ownership and str(_ownership).strip() not in ("", "nan", "None"):
+        _struct_str += f" / {_ownership}" if _struct_str else str(_ownership)
+    if _fund_own and not (isinstance(_fund_own, float) and pd.isna(_fund_own)):
+        try:
+            _struct_str += f" ({float(_fund_own)*100:.0f}% ownership)"
+        except Exception:
+            pass
+
+    _val_method  = info_row.get("valuation_methodology", "") if info_row is not None else ""
+    if not _val_method or str(_val_method).strip() in ("", "nan", "None"):
+        _val_method = "—"
+
+    # Last available quarter's value — TEV from ltm_snapshot, with prior-quarter delta
+    _cur_tev = _ltm_row.get("current_tev") if _ltm_row is not None else None
+    _cur_tev_str = _inv_fmt(_cur_tev)
+    # Try to get prior quarter delta from quarterly data
+    _tev_delta_str = ""
+    try:
+        _qdf = load_quarterly(selected)
+        if not _qdf.empty and "tev" in _qdf.columns:
+            _qdf = _qdf.sort_values("cash_flow_date").dropna(subset=["tev"])
+            if len(_qdf) >= 2:
+                _tev_latest = float(_qdf.iloc[-1]["tev"])
+                _tev_prior  = float(_qdf.iloc[-2]["tev"])
+                _tev_delta  = _tev_latest - _tev_prior
+                _sign = "+" if _tev_delta >= 0 else ""
+                _tev_delta_str = f" ({_sign}{_inv_fmt(_tev_delta)} vs. prior quarter)"
+                _latest_period = str(_qdf.iloc[-1].get("period_label", ""))
+    except Exception:
+        _latest_period = ""
+
+    _last_val_label = f"{_latest_period} Value" if _latest_period else "Last Quarter Value"
+    _last_val_str   = f"{_cur_tev_str}{_tev_delta_str}" if _cur_tev_str != "—" else "—"
+
+    # Company header card — left: name/sector, right: Investment Update table
     if flag_row is not None:
-        overall = flag_row.get("overall_flag", "")
-        sector  = info_row.get("client_sector", "") if info_row is not None else ""
-        inv_date = str(info_row.get("investment_date", ""))[:10] if info_row is not None else ""
-        security = info_row.get("security_type", "") if info_row is not None else ""
+        overall   = flag_row.get("overall_flag", "")
+        sector    = info_row.get("client_sector", "") if info_row is not None else ""
+        inv_date  = str(info_row.get("investment_date", ""))[:10] if info_row is not None else ""
+        security  = info_row.get("security_type", "") if info_row is not None else ""
         ownership = info_row.get("ownership_structure", "") if info_row is not None else ""
-        geo      = info_row.get("geography", "") if info_row is not None else ""
-        hq       = info_row.get("headquarters", "") if info_row is not None else ""
+        geo       = info_row.get("geography", "") if info_row is not None else ""
+        hq        = info_row.get("headquarters", "") if info_row is not None else ""
 
         st.markdown(f"""
         <div style="background:white; border:1px solid {BORDER}; border-radius:6px;
                     padding:16px 20px; margin-bottom:16px;">
-            <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div style="display:flex; align-items:center; gap:14px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:24px;">
+                <!-- Left: company identity -->
+                <div style="display:flex; align-items:center; gap:14px; flex:1;">
                     <div style="background:{NAVY}; color:white; padding:10px 16px;
-                                border-radius:4px; font-weight:700; font-family:Arial; font-size:18px;">
+                                border-radius:4px; font-weight:700; font-family:Arial; font-size:18px;
+                                flex-shrink:0;">
                         {selected[:2].upper()}
                     </div>
                     <div>
@@ -510,7 +666,46 @@ def page_company_detail_enhanced():
                         </div>
                     </div>
                 </div>
-                <div>{flag_badge(overall)}</div>
+                <!-- Right: overall flag + Investment Update table -->
+                <div style="display:flex; flex-direction:column; align-items:flex-end; gap:10px; flex-shrink:0;">
+                    <div>{flag_badge(overall)}</div>
+                    <!-- Investment Update card -->
+                    <div style="border:1px solid {BORDER}; border-radius:6px; overflow:hidden;
+                                min-width:320px; font-family:Arial; font-size:12px;">
+                        <div style="background:{NAVY}; color:white; font-weight:700;
+                                    font-size:12px; padding:7px 14px; letter-spacing:0.3px;
+                                    text-align:center;">
+                            Investment Update
+                        </div>
+                        <table style="width:100%; border-collapse:collapse;">
+                            <tr style="border-bottom:1px solid {BORDER};">
+                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                           background:#F8F9FA; width:45%;">Investment Date:</td>
+                                <td style="padding:6px 12px; color:{SLATE};">{_inv_date_fmt}</td>
+                            </tr>
+                            <tr style="border-bottom:1px solid {BORDER};">
+                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                           background:#F8F9FA;">Aggregate Investment:</td>
+                                <td style="padding:6px 12px; color:{SLATE};">{_total_cost}</td>
+                            </tr>
+                            <tr style="border-bottom:1px solid {BORDER};">
+                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                           background:#F8F9FA;">Structure/Ownership:</td>
+                                <td style="padding:6px 12px; color:{SLATE};">{_struct_str if _struct_str else "—"}</td>
+                            </tr>
+                            <tr style="border-bottom:1px solid {BORDER};">
+                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                           background:#F8F9FA;">Valuation Methodology:</td>
+                                <td style="padding:6px 12px; color:{SLATE};">{_val_method}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                           background:#F8F9FA;">{_last_val_label}:</td>
+                                <td style="padding:6px 12px; color:{SLATE}; font-style:italic;">{_last_val_str}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1017,17 +1212,237 @@ def page_company_detail_enhanced():
             st.info("No quarterly data available for this company.")
 
     with tab2:
-        st.markdown(f"""
-        <div style="background:#F8F9FA; border:2px dashed #CCCCCC; border-radius:10px;
-                    padding:60px 40px; text-align:center; margin-top:20px;">
-            <div style="font-size:28px; margin-bottom:12px;">🔬</div>
-            <div style="font-size:18px; font-weight:700; color:#999999; font-family:Arial;
-                        margin-bottom:8px;">Company-Specific Analysis — Coming Soon</div>
-            <div style="font-size:13px; color:#BBBBBB; font-family:Arial;">
-                Deep-dive company analytics and custom analysis views will be available here.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # ── Company-Specific Analysis: pulls from page_company_kpis ─────────────
+        try:
+            from page_company_kpis import (
+                _fmt, _delta_str, _make_bar_chart, _make_line_chart,
+                _build_kpi_context, _render_ai_summary,
+                CHART_COLORS, NAVY as KPI_NAVY, SLATE as KPI_SLATE,
+                BORDER as KPI_BORDER, LIGHT_BG as KPI_LIGHT_BG,
+            )
+            from company_kpi_config import COMPANY_KPI_CONFIG
+            from db import load_company_kpis, load_company_kpis_all
+
+            # ── Period selector ──────────────────────────────────────────────
+            _p_col, _ = st.columns([3, 5])
+            with _p_col:
+                _period_mode = st.radio(
+                    "Period",
+                    ["Monthly", "Quarterly", "Annual"],
+                    index=1,
+                    horizontal=True,
+                    key=f"csa_period_{selected}",
+                    label_visibility="collapsed",
+                )
+
+            if selected not in COMPANY_KPI_CONFIG:
+                st.info(f"No Company-Specific Analysis configured for {selected} yet.")
+            else:
+                cfg        = COMPANY_KPI_CONFIG[selected]
+                kpi_cards  = cfg.get("kpi_cards", [])
+                kpi_charts = cfg.get("kpi_charts", [])
+                all_attrs  = list({k["attribute"] for k in kpi_cards + kpi_charts})
+                df_kpi     = load_company_kpis(selected, all_attrs, _period_mode)
+
+                if df_kpi.empty:
+                    st.info(f"No {_period_mode} KPI data found for {selected}. "
+                            f"Ensure company_kpis.csv is up to date.")
+                else:
+                    # ── KPI cards ────────────────────────────────────────────
+                    st.markdown('<div class="section-header-co">Latest Period</div>',
+                                unsafe_allow_html=True)
+                    _latest = df_kpi.sort_values("cash_flow_date").iloc[-1]
+                    _prev_rows = df_kpi.sort_values("cash_flow_date")
+                    _prev = _prev_rows.iloc[-2] if len(_prev_rows) >= 2 else None
+
+                    _card_cols = st.columns(len(kpi_cards)) if kpi_cards else []
+                    for _i, _card in enumerate(kpi_cards):
+                        _attr  = _card["attribute"]
+                        _fmt   = _card["format"]
+                        _label = _card["label"]
+                        _val   = _latest.get(_attr) if _attr in _latest.index else None
+                        _pval  = _prev.get(_attr) if (_prev is not None and _attr in _prev.index) else None
+                        _delta, _dcol = _delta_str(_val, _pval, _fmt)
+                        with _card_cols[_i]:
+                            st.markdown(f"""
+                            <div class="kpi-card-co">
+                                <div class="label">{_label}</div>
+                                <div class="value">{_fmt(_val, _fmt)}</div>
+                                <div class="delta" style="color:{_dcol};">{_delta}&nbsp;</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    # ── Core Power bespoke visuals ───────────────────────────
+                    # Three dedicated charts (TTM EBITDA, Revenue Mix, Waterfall)
+                    # rendered before the standard KPI grid.
+                    if selected == "Core Power":
+                        try:
+                            from corepower_visuals import render_corepower_visuals
+                            from db import load_company_kpis_all
+                            _cp_all = load_company_kpis_all()
+                            render_corepower_visuals(_cp_all)
+                            st.markdown(
+                                "<hr style='border-color:#E0E4EA; margin:28px 0 20px 0;'>",
+                                unsafe_allow_html=True,
+                            )
+                        except Exception as _cpe:
+                            st.warning(f"Core Power visuals error: {_cpe}")
+
+                    # ── Charts: grouped by theme for Core Power ──────────────
+                    # For Core Power, organise charts into themed sections.
+                    # For all other companies, render as 2-col grid (existing behaviour).
+                    _is_core_power = (selected == "Core Power")
+
+                    if _is_core_power:
+                        _CHART_GROUPS = [
+                            ("Revenue Mix", [
+                                "Total Studio Revenue", "Member Cash Revenue",
+                                "Non-Member Revenue", "Membership Revenue",
+                                "Corporate & Franchise Rev", "Retail Revenue",
+                                "Retail Gross Margin", "Franchise & Royalties",
+                            ]),
+                            ("Studio Economics", [
+                                "Studio Contribution", "Studio Contribution ex-Occ",
+                                "Studio Contribution ex-SLR", "Studio Expense ex-Rent",
+                                "Labor", "Occupancy (Cash Rent)", "Programming",
+                                "Pre-Opening Expense",
+                            ]),
+                            ("Operating Metrics", [
+                                "Avg Membership Price", "Attendance / Studio (Mem)",
+                                "Attendance / Studio (Non-Mem)", "Classes / Day",
+                            ]),
+                            ("Liquidity & Debt", [
+                                "LTM Free Cash Flow", "Cash Balance",
+                                "Debt Service Coverage", "Net Leverage Trend",
+                                "Floating Rate Debt", "Fixed Rate Debt",
+                            ]),
+                        ]
+                        # Build a label→config lookup
+                        _chart_by_label = {c["label"]: c for c in kpi_charts}
+                        _chart_df = df_kpi.sort_values("cash_flow_date").tail(12)
+
+                        for _group_name, _group_labels in _CHART_GROUPS:
+                            _group_charts = [_chart_by_label[l] for l in _group_labels
+                                             if l in _chart_by_label]
+                            if not _group_charts:
+                                continue
+                            st.markdown(f'<div class="section-header-co">{_group_name}</div>',
+                                        unsafe_allow_html=True)
+                            for _row_start in range(0, len(_group_charts), 2):
+                                _pair = _group_charts[_row_start: _row_start + 2]
+                                _gcols = st.columns(2)
+                                for _ci, _cc in enumerate(_pair):
+                                    _attr  = _cc["attribute"]
+                                    _fmt_c = _cc["format"]
+                                    _lbl   = _cc["label"]
+                                    _ctype = _cc.get("chart", "bar")
+                                    _color = CHART_COLORS[(_row_start + _ci) % len(CHART_COLORS)]
+                                    with _gcols[_ci]:
+                                        _has = (_attr in _chart_df.columns
+                                                and _chart_df[_attr].notna().any())
+                                        st.markdown(
+                                            f'<div class="chart-card-co">'
+                                            f'<div class="chart-title-co">{_lbl}</div></div>',
+                                            unsafe_allow_html=True
+                                        )
+
+                                        # Per-period comment input (stored in session state)
+                                        _comment_key = f"chart_comments_{selected}_{_attr}"
+                                        if _comment_key not in st.session_state:
+                                            st.session_state[_comment_key] = {}
+
+                                        if not _has:
+                                            st.caption(f"No data for '{_attr}'")
+                                            continue
+
+                                        if _ctype == "line":
+                                            _fig = _make_line_chart(_chart_df, _attr, _lbl, _fmt_c, _color)
+                                        else:
+                                            _fig = _make_bar_chart(_chart_df, _attr, _lbl, _fmt_c, _color)
+
+                                        # Overlay annotations from saved comments
+                                        _comments = st.session_state[_comment_key]
+                                        if _comments and _attr in _chart_df.columns:
+                                            for _period, _note in _comments.items():
+                                                if _note:
+                                                    _fig.add_annotation(
+                                                        x=_period, y=0,
+                                                        text=f"💬 {_note[:30]}{'…' if len(_note)>30 else ''}",
+                                                        showarrow=True, arrowhead=2,
+                                                        arrowcolor=KPI_SLATE,
+                                                        font=dict(size=9, color=KPI_SLATE),
+                                                        bgcolor="white",
+                                                        bordercolor=KPI_SLATE,
+                                                        borderwidth=1,
+                                                        yref="paper", yanchor="bottom", ay=-40
+                                                    )
+
+                                        st.plotly_chart(_fig, use_container_width=True,
+                                                        config={"displayModeBar": False})
+
+                                        # Comment input
+                                        with st.expander("Add comment", expanded=False):
+                                            _avail_periods = (
+                                                _chart_df["period_label"].dropna().tolist()
+                                                if "period_label" in _chart_df.columns else []
+                                            )
+                                            if _avail_periods:
+                                                _sel_period = st.selectbox(
+                                                    "Period",
+                                                    _avail_periods,
+                                                    key=f"cmt_period_{selected}_{_attr}",
+                                                    label_visibility="collapsed",
+                                                )
+                                                _cmt_text = st.text_input(
+                                                    "Comment",
+                                                    value=st.session_state[_comment_key].get(_sel_period, ""),
+                                                    key=f"cmt_text_{selected}_{_attr}_{_sel_period}",
+                                                    placeholder="Add a note for this period…",
+                                                    label_visibility="collapsed",
+                                                )
+                                                if st.button("Save", key=f"cmt_save_{selected}_{_attr}_{_sel_period}",
+                                                             use_container_width=False):
+                                                    st.session_state[_comment_key][_sel_period] = _cmt_text
+                                                    st.rerun()
+                    else:
+                        # ── Standard 2-column grid for all other companies ────
+                        st.markdown('<div class="section-header-co">Trend Charts</div>',
+                                    unsafe_allow_html=True)
+                        _chart_df = df_kpi.sort_values("cash_flow_date").tail(12)
+                        for _row_start in range(0, len(kpi_charts), 2):
+                            _pair = kpi_charts[_row_start: _row_start + 2]
+                            _gcols = st.columns(2)
+                            for _ci, _cc in enumerate(_pair):
+                                _attr  = _cc["attribute"]
+                                _fmt_c = _cc["format"]
+                                _lbl   = _cc["label"]
+                                _ctype = _cc.get("chart", "bar")
+                                _color = CHART_COLORS[(_row_start + _ci) % len(CHART_COLORS)]
+                                with _gcols[_ci]:
+                                    _has = (_attr in _chart_df.columns
+                                            and _chart_df[_attr].notna().any())
+                                    st.markdown(
+                                        f'<div class="chart-card-co">'
+                                        f'<div class="chart-title-co">{_lbl}</div></div>',
+                                        unsafe_allow_html=True
+                                    )
+                                    if not _has:
+                                        st.caption(f"No data for '{_attr}'")
+                                        continue
+                                    if _ctype == "line":
+                                        _fig = _make_line_chart(_chart_df, _attr, _lbl, _fmt_c, _color)
+                                    else:
+                                        _fig = _make_bar_chart(_chart_df, _attr, _lbl, _fmt_c, _color)
+                                    st.plotly_chart(_fig, use_container_width=True,
+                                                    config={"displayModeBar": False})
+
+                    # ── AI Summary ───────────────────────────────────────────
+                    st.markdown('<div class="section-header-co">AI Summary</div>',
+                                unsafe_allow_html=True)
+                    _render_ai_summary_categorized(selected, df_kpi, kpi_cards, kpi_charts)
+
+        except Exception as _exc:
+            st.error(f"Company-Specific Analysis error: {_exc}")
 
     with tab3:
         st.markdown(f"""
@@ -1114,14 +1529,21 @@ def page_company_detail_enhanced():
             <div style="background:{LIGHT_BG}; border-left:3px solid {SLATE};
                         border-radius:4px; padding:10px 14px; margin-bottom:12px;
                         font-size:12px; color:{NAVY}; font-family:Arial;">
-                <b>Sector:</b> {macro_sector}
+                <b>Sector:</b> {macro_sector} —
+                Macro data integration (CapIQ comps, sector benchmarks) coming soon.
             </div>
             """, unsafe_allow_html=True)
-
-        # News feed
-        st.markdown('<div class="section-header">📰 Recent News</div>',
-                    unsafe_allow_html=True)
-        render_news_section(selected)
+        # News — coming soon
+        st.markdown(f"""
+        <div style="background:#F8F9FA; border:1px dashed #CCCCCC; border-radius:6px;
+                    padding:20px 24px; margin-bottom:16px;">
+            <div style="font-size:13px; font-weight:700; color:#999; font-family:Arial;
+                        margin-bottom:4px;">📰 Company News</div>
+            <div style="font-size:12px; color:#BBBBBB; font-family:Arial;">
+                News feed coming soon.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with tab6:
         if info_row is None:
