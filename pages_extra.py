@@ -373,6 +373,114 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     if _saved_ops:
         context += f"\n\nOPERATIONAL NOTES (manually entered by team):\n{_saved_ops}"
 
+    # ── Context Notes — collapsable, above AI sections ───────────────────────
+    # Accepts free-text notes AND uploaded files (PDF, DOCX, TXT, CSV).
+    # All content is injected into the AI context on generation/regeneration.
+    _notes_saved    = st.session_state.get(ops_notes_key, "")
+    _files_key      = f"csa_uploaded_files_{company}"
+    _files_text_key = f"csa_files_text_{company}"
+    if _files_key not in st.session_state:
+        st.session_state[_files_key] = []
+    if _files_text_key not in st.session_state:
+        st.session_state[_files_text_key] = {}
+
+    # Label shows a checkmark if any context has been saved
+    _has_context = bool(_notes_saved.strip() or st.session_state[_files_text_key])
+    _expander_label = "📎 Context Notes & Files" + (" ✓" if _has_context else "")
+
+    with st.expander(_expander_label, expanded=False):
+        st.caption(
+            "Add any notes or upload files to give the AI additional context — "
+            "board updates, management commentary, press releases, earnings transcripts, etc. "
+            "Saved content is included every time the summary is generated or regenerated."
+        )
+
+        # ── Text notes ───────────────────────────────────────────────────────
+        _notes_input = st.text_area(
+            "Notes",
+            value=_notes_saved,
+            placeholder=(
+                "Paste any context here — operational updates, key themes from board meetings, "
+                "management commentary, financing developments, competitive dynamics, etc."
+            ),
+            height=130,
+            key=f"csa_notes_input_{company}",
+            label_visibility="visible",
+        )
+
+        # ── File upload ───────────────────────────────────────────────────────
+        _uploaded = st.file_uploader(
+            "Upload files",
+            type=["pdf", "txt", "csv", "docx", "md"],
+            accept_multiple_files=True,
+            key=f"csa_file_upload_{company}",
+            help="PDF, TXT, CSV, DOCX, or Markdown. Text is extracted and added to AI context.",
+        )
+
+        # Extract text from newly uploaded files
+        if _uploaded:
+            for _f in _uploaded:
+                if _f.name not in st.session_state[_files_text_key]:
+                    try:
+                        _raw_bytes = _f.read()
+                        _ext = _f.name.rsplit(".", 1)[-1].lower()
+                        if _ext == "pdf":
+                            try:
+                                import pypdf as _pypdf
+                                _reader = _pypdf.PdfReader(__import__("io").BytesIO(_raw_bytes))
+                                _txt = "\n".join(
+                                    p.extract_text() or "" for p in _reader.pages
+                                )
+                            except Exception:
+                                _txt = _raw_bytes.decode("utf-8", errors="ignore")
+                        elif _ext == "docx":
+                            try:
+                                import docx as _docx
+                                _doc = _docx.Document(__import__("io").BytesIO(_raw_bytes))
+                                _txt = "\n".join(p.text for p in _doc.paragraphs)
+                            except Exception:
+                                _txt = _raw_bytes.decode("utf-8", errors="ignore")
+                        else:
+                            _txt = _raw_bytes.decode("utf-8", errors="ignore")
+                        st.session_state[_files_text_key][_f.name] = _txt[:15000]  # cap per file
+                    except Exception as _fe:
+                        st.warning(f"Could not read {_f.name}: {_fe}")
+
+        # Show currently loaded files
+        if st.session_state[_files_text_key]:
+            st.markdown("**Loaded files:**")
+            for _fname, _ftxt in list(st.session_state[_files_text_key].items()):
+                _fcol1, _fcol2 = st.columns([5, 1])
+                with _fcol1:
+                    st.caption(f"📄 {_fname} — {len(_ftxt):,} chars extracted")
+                with _fcol2:
+                    if st.button("✕", key=f"csa_del_file_{company}_{_fname}",
+                                 use_container_width=True):
+                        del st.session_state[_files_text_key][_fname]
+                        st.session_state.pop(session_key, None)
+                        st.rerun()
+
+        # ── Save button ───────────────────────────────────────────────────────
+        _save_col, _ = st.columns([1, 6])
+        with _save_col:
+            if st.button("Save", key=f"csa_notes_save_{company}", use_container_width=True):
+                st.session_state[ops_notes_key] = _notes_input
+                # Clear cached summary so it regenerates with new context
+                st.session_state.pop(session_key, None)
+                st.rerun()
+
+    # Build combined context string from notes + files for AI injection
+    _all_extra_context = ""
+    _saved_notes = st.session_state.get(ops_notes_key, "")
+    if _saved_notes.strip():
+        _all_extra_context += f"\n\nADDITIONAL CONTEXT NOTES (added by team):\n{_saved_notes.strip()}"
+    for _fname, _ftxt in st.session_state[_files_text_key].items():
+        _all_extra_context += f"\n\n--- FILE: {_fname} ---\n{_ftxt.strip()}"
+
+    # Inject into context before cache check (so regeneration picks it up)
+    if _all_extra_context:
+        context += _all_extra_context
+
     # ── Auto-generate on first load ───────────────────────────────────────────
     if session_key not in st.session_state:
         with st.spinner("Generating summary..."):
@@ -409,17 +517,14 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     _sections = {"FINANCIALS": "", "LIQUIDITY": "", "FINANCING": ""}
     _current  = None
     for _line in raw.splitlines():
-        # Strip markdown bold/italic/header chars to get the plain text
         _clean = _re.sub(r"[*#_`]", "", _line).strip().upper().rstrip(":").strip()
         if _clean in _sections:
             _current = _clean
             continue
         if _current:
-            # Strip leading markdown from content lines too (e.g. **bullet** → bullet)
             _content_line = _re.sub(r"\*\*(.+?)\*\*", r"\1", _line)
             _sections[_current] += _content_line + "\n"
 
-    # Fallback: if parser found nothing, dump everything into Financials
     if not any(v.strip() for v in _sections.values()):
         _sections["FINANCIALS"] = raw
 
@@ -441,47 +546,26 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     </div>
     """, unsafe_allow_html=True)
 
-    # Operational — manual notes only
+    # Operational — renders saved notes as a read-only display block
+    _ops_display = _saved_notes.strip() if _saved_notes.strip() else "No notes saved yet."
     st.markdown(f"""
     <div style="border-left:3px solid {_SECTION_COLORS['OPERATIONAL']}; padding:8px 14px;
-                margin-bottom:6px; background:#F8F9FA; border-radius:0 4px 4px 0;">
+                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;">
         <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['OPERATIONAL']};
-                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;">
+                    font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
+                    margin-bottom:6px;">
             Operational
             <span style="font-size:10px; font-weight:400; color:{SLATE};
-                         text-transform:none; margin-left:8px;">
-                (manual notes — no structured data source)
-            </span>
+                         text-transform:none; margin-left:8px;">(manual)</span>
         </div>
+        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_ops_display}</div>
     </div>
     """, unsafe_allow_html=True)
-
-    _ops_saved = st.session_state.get(ops_notes_key, "")
-    _ops_input = st.text_area(
-        "Operational notes",
-        value=_ops_saved,
-        placeholder=(
-            "Paste or type operational updates here — studio openings, membership trends, "
-            "management changes, partnership updates, etc. "
-            "These notes will be included when regenerating the AI summary."
-        ),
-        height=120,
-        key=f"csa_ops_input_{company}",
-        label_visibility="collapsed",
-    )
-    _save_col, _ = st.columns([1, 6])
-    with _save_col:
-        if st.button("Save Notes", key=f"csa_ops_save_{company}", use_container_width=True):
-            st.session_state[ops_notes_key] = _ops_input
-            # Clear cached AI summary so it regenerates with the new notes
-            st.session_state.pop(session_key, None)
-            st.rerun()
 
     # Liquidity
     st.markdown(f"""
     <div style="border-left:3px solid {_SECTION_COLORS['LIQUIDITY']}; padding:8px 14px;
-                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;
-                margin-top:10px;">
+                margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;">
         <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['LIQUIDITY']};
                     font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
                     margin-bottom:6px;">Liquidity</div>
@@ -525,7 +609,7 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
             try:
                 _resp = ask_claude(
                     _user_q,
-                    context + "\n\n" + SYSTEM,   # context already has ops notes injected
+                    context + "\n\n" + SYSTEM,  # context already has notes + files injected
                     st.session_state[chat_key][:-1],
                 )
             except Exception as _e:
@@ -622,27 +706,29 @@ def page_company_detail_enhanced():
     if not _val_method or str(_val_method).strip() in ("", "nan", "None"):
         _val_method = "—"
 
-    # Last available quarter's value — TEV from ltm_snapshot, with prior-quarter delta
-    _cur_tev = _ltm_row.get("current_tev") if _ltm_row is not None else None
-    _cur_tev_str = _inv_fmt(_cur_tev)
-    # Try to get prior quarter delta from quarterly data
-    _tev_delta_str = ""
+    # Last available quarter's value — Total Realized & Unrealized Value
+    # Both the value and the label come from the same latest quarterly row
+    # so they're always in sync.
+    _last_val_label = "Latest Quarter Value"
+    _last_val_str   = "—"
     try:
         _qdf = load_quarterly(selected)
-        if not _qdf.empty and "tev" in _qdf.columns:
-            _qdf = _qdf.sort_values("cash_flow_date").dropna(subset=["tev"])
-            if len(_qdf) >= 2:
-                _tev_latest = float(_qdf.iloc[-1]["tev"])
-                _tev_prior  = float(_qdf.iloc[-2]["tev"])
-                _tev_delta  = _tev_latest - _tev_prior
-                _sign = "+" if _tev_delta >= 0 else ""
-                _tev_delta_str = f" ({_sign}{_inv_fmt(_tev_delta)} vs. prior quarter)"
-                _latest_period = str(_qdf.iloc[-1].get("period_label", ""))
+        if not _qdf.empty and "total_value" in _qdf.columns:
+            _qdf = _qdf.sort_values("cash_flow_date").dropna(subset=["total_value"])
+            if not _qdf.empty:
+                _latest_row    = _qdf.iloc[-1]
+                _latest_val    = float(_latest_row["total_value"])
+                _latest_period = str(_latest_row.get("period_label", "")).strip()
+                _last_val_label = f"{_latest_period} Value" if _latest_period else "Latest Quarter Value"
+                _last_val_str   = _inv_fmt(_latest_val)
+                # Delta vs. prior quarter
+                if len(_qdf) >= 2:
+                    _prior_val  = float(_qdf.iloc[-2]["total_value"])
+                    _delta      = _latest_val - _prior_val
+                    _sign       = "+" if _delta >= 0 else ""
+                    _last_val_str += f" ({_sign}{_inv_fmt(_delta)} vs. prior quarter)"
     except Exception:
-        _latest_period = ""
-
-    _last_val_label = f"{_latest_period} Value" if _latest_period else "Last Quarter Value"
-    _last_val_str   = f"{_cur_tev_str}{_tev_delta_str}" if _cur_tev_str != "—" else "—"
+        pass
 
     # Company header card — left: name/sector, right: Investment Update table
     if flag_row is not None:
@@ -1375,6 +1461,14 @@ def page_company_detail_enhanced():
                             </div>
                             """, unsafe_allow_html=True)
 
+                    # ── AI Summary ───────────────────────────────────────────
+                    st.markdown('<div class="section-header-co">AI Summary</div>',
+                                unsafe_allow_html=True)
+                    _render_ai_summary_categorized(selected, df_kpi, kpi_cards, kpi_charts)
+
+                    st.markdown("<hr style='border-color:#E0E4EA; margin:24px 0;'>",
+                                unsafe_allow_html=True)
+
                     # ── Core Power bespoke visuals ───────────────────────────
                     # Three dedicated charts (TTM EBITDA, Revenue Mix, Waterfall)
                     # rendered before the standard KPI grid.
@@ -1545,11 +1639,6 @@ def page_company_detail_enhanced():
                                         _fig = _make_bar_chart(_chart_df, _attr, _lbl, _fmt_c, _color)
                                     st.plotly_chart(_fig, use_container_width=True,
                                                     config={"displayModeBar": False})
-
-                    # ── AI Summary ───────────────────────────────────────────
-                    st.markdown('<div class="section-header-co">AI Summary</div>',
-                                unsafe_allow_html=True)
-                    _render_ai_summary_categorized(selected, df_kpi, kpi_cards, kpi_charts)
 
         except Exception as _exc:
             st.error(f"Company-Specific Analysis error: {_exc}")
