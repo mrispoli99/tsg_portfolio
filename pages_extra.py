@@ -740,6 +740,19 @@ def page_company_detail_enhanced():
         geo       = info_row.get("geography", "") if info_row is not None else ""
         hq        = info_row.get("headquarters", "") if info_row is not None else ""
 
+        # Build subtitle — suppress any null/nan fields cleanly
+        def _clean(v):
+            return str(v).strip() if v and str(v).strip() not in ("", "nan", "None", "NaN") else ""
+        _sub = []
+        if _clean(sector):   _sub.append(_clean(sector))
+        if _clean(geo):      _sub.append(_clean(geo)[:30])
+        if _clean(inv_date): _sub.append(f"Entry {inv_date}")
+        _pipes = []
+        if _clean(hq):       _pipes.append(f"HQ: {_clean(hq)}")
+        _subtitle_line = " · ".join(_sub)
+        if _pipes:
+            _subtitle_line += " &nbsp;|&nbsp; " + " &nbsp;|&nbsp; ".join(_pipes)
+
         st.markdown(f"""
         <div style="background:white; border:1px solid {BORDER}; border-radius:6px;
                     padding:16px 20px; margin-bottom:16px;">
@@ -756,9 +769,7 @@ def page_company_detail_enhanced():
                             {selected}
                         </div>
                         <div style="font-size:12px; color:{SLATE}; font-family:Arial; margin-top:2px;">
-                            {sector} · {geo[:25] if geo else ""} · Entry {inv_date}
-                            &nbsp;|&nbsp; {security} &nbsp;|&nbsp; {ownership}
-                            &nbsp;|&nbsp; HQ: {hq}
+                            {_subtitle_line}
                         </div>
                     </div>
                 </div>
@@ -783,11 +794,6 @@ def page_company_detail_enhanced():
                                 <td style="padding:6px 12px; font-weight:600; color:{NAVY};
                                            background:#F8F9FA;">Aggregate Investment:</td>
                                 <td style="padding:6px 12px; color:{SLATE};">{_total_cost}</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid {BORDER};">
-                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
-                                           background:#F8F9FA;">Structure/Ownership:</td>
-                                <td style="padding:6px 12px; color:{SLATE};">{_struct_str if _struct_str else "—"}</td>
                             </tr>
                             <tr style="border-bottom:1px solid {BORDER};">
                                 <td style="padding:6px 12px; font-weight:600; color:{NAVY};
@@ -828,6 +834,18 @@ def page_company_detail_enhanced():
             ("interest_coverage_flag", "interest_coverage",     "Int. Coverage",   format_multiple,
              "Green >3x · Yellow 2–3x · Red <2x",     "LTM Adj. EBITDA / LTM Cash Interest"),
         ]
+        # Build period label strings for the flag cards
+        _as_of = flag_row.get("as_of_date")
+        try:
+            _as_of_ts  = pd.to_datetime(_as_of)
+            _as_of_lbl = _as_of_ts.strftime("%b %Y")
+            _py_lbl    = (_as_of_ts - pd.DateOffset(years=1)).strftime("%b %Y")
+            _yoy_period_lbl  = f"{_as_of_lbl} vs. {_py_lbl}"
+            _curr_period_lbl = _as_of_lbl
+        except Exception:
+            _yoy_period_lbl  = ""
+            _curr_period_lbl = ""
+
         flag_card_cols = st.columns(4)
         for col, (fk, vk, lbl, fmt, thresh, calc) in zip(flag_card_cols, FLAG_CARD_DEFS):
             fval    = str(flag_row.get(fk, "") or "")
@@ -835,13 +853,16 @@ def page_company_detail_enhanced():
             fclr    = {"Red": RED_FLAG, "Yellow": XANTHOUS, "Green": SEA_GREEN}.get(fval, SLATE)
             val_str = fmt(val) if val is not None and not pd.isna(val) else "—"
             tip     = f"{lbl}\nCalc: {calc}\nThresholds: {thresh}"
+            # Period sub-label — YoY metrics show "Dec 2025 vs. Dec 2024", others show "Dec 2025"
+            _plbl = _yoy_period_lbl if "yoy" in vk.lower() or "growth" in vk.lower() else _curr_period_lbl
             col.markdown(
-                f'<div title="{tip}" style="background:white;border:1px solid {BORDER};' 
-                f'border-left:4px solid {fclr};border-radius:4px;padding:8px 10px;cursor:help;">' 
-                f'<div style="font-size:18px;font-weight:700;color:{fclr};font-family:Arial;">{val_str}</div>' 
-                f'<div style="font-size:10px;color:{SLATE};font-family:Arial;margin-top:2px;">{lbl}</div>' 
-                f'<div style="font-size:9px;color:{fclr};font-family:Arial;font-weight:600;">' 
-                f'{flag_emoji(fval)} {fval}</div>' 
+                f'<div title="{tip}" style="background:white;border:1px solid {BORDER};'
+                f'border-left:4px solid {fclr};border-radius:4px;padding:8px 10px;cursor:help;">'
+                f'<div style="font-size:18px;font-weight:700;color:{fclr};font-family:Arial;">{val_str}</div>'
+                f'<div style="font-size:10px;color:{SLATE};font-family:Arial;margin-top:2px;">{lbl}</div>'
+                f'<div style="font-size:9px;color:#AAAAAA;font-family:Arial;margin-top:1px;">{_plbl}</div>'
+                f'<div style="font-size:9px;color:{fclr};font-family:Arial;font-weight:600;">'
+                f'{flag_emoji(fval)} {fval}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -885,9 +906,10 @@ def page_company_detail_enhanced():
         if not quarterly.empty and "period" in quarterly.columns:
             quarterly = quarterly[quarterly["period"] == _pf_val].copy()
 
-        # Apply 3-year rolling window
+        # Apply rolling window — sized by period mode so all granularities show enough data
         if not quarterly.empty:
-            _cutoff = _pd.Timestamp.now() - _pd.DateOffset(years=3)
+            _window_years = {"Quarterly": 3, "Monthly": 2, "Yearly": 10}
+            _cutoff = _pd.Timestamp.now() - _pd.DateOffset(years=_window_years.get(co_period_mode, 3))
             quarterly = quarterly[quarterly["cash_flow_date"] >= _cutoff]
 
         if not quarterly.empty:
@@ -1477,7 +1499,7 @@ def page_company_detail_enhanced():
                             from corepower_visuals import render_corepower_visuals
                             from db import load_company_kpis_all
                             _cp_all = load_company_kpis_all()
-                            render_corepower_visuals(_cp_all)
+                            render_corepower_visuals(_cp_all, _period_mode)
                             st.markdown(
                                 "<hr style='border-color:#E0E4EA; margin:28px 0 20px 0;'>",
                                 unsafe_allow_html=True,
