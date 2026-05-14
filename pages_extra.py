@@ -357,10 +357,21 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         "Analyze ONLY the data explicitly provided. Never invent numbers. "
         "If a metric is absent, write 'not available'. "
         "Format dollar values as '$X.XM'. Always cite the period for each data point. "
-        "Respond using plain bullet points — no markdown headers, no bold, no backticks."
+        "CRITICAL FORMATTING RULE: You MUST use exactly these three section headers on their own "
+        "lines, with no markdown formatting around them — no asterisks, no hashes, no bold:\n"
+        "FINANCIALS:\n"
+        "LIQUIDITY:\n"
+        "FINANCING:\n"
+        "Each section header must be on its own line, followed immediately by bullet points. "
+        "Do not add any other headers, bold text, or markdown formatting anywhere in your response."
     )
 
     context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
+
+    # Inject saved operational notes into context if present
+    _saved_ops = st.session_state.get(ops_notes_key, "")
+    if _saved_ops:
+        context += f"\n\nOPERATIONAL NOTES (manually entered by team):\n{_saved_ops}"
 
     # ── Auto-generate on first load ───────────────────────────────────────────
     if session_key not in st.session_state:
@@ -368,7 +379,8 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
             try:
                 prompt = (
                     f"Using only the data provided, write a structured performance summary for "
-                    f"{company}. Separate your response into exactly three clearly labeled sections:\n\n"
+                    f"{company}. Your response MUST contain exactly these three section headers "
+                    f"on their own lines, with no markdown or bold formatting:\n\n"
                     f"FINANCIALS:\n"
                     f"- 2-3 bullets on revenue trajectory, EBITDA, and margin trends\n\n"
                     f"LIQUIDITY:\n"
@@ -376,10 +388,11 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
                     f"FINANCING:\n"
                     f"- 2 bullets on leverage level, debt composition (fixed vs. floating), "
                     f"and any notable credit dynamics\n\n"
-                    f"Use only data explicitly in the provided context. "
+                    f"Do not use asterisks, bold, hashes, or any other markdown around the section "
+                    f"headers. Write the headers exactly as shown above. "
                     f"Do not add an Operational section — that is handled separately."
                 )
-                summary = ask_claude(prompt, context + "\n\nSystem: " + SYSTEM, [])
+                summary = ask_claude(prompt, context + "\n\n" + SYSTEM, [])
                 st.session_state[session_key] = summary
                 st.session_state[chat_key] = [
                     {"role": "user",      "content": prompt},
@@ -391,21 +404,23 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     # ── Render the four sections ──────────────────────────────────────────────
     raw = st.session_state.get(session_key, "")
 
-    # Parse the AI output into sections (looks for FINANCIALS:, LIQUIDITY:, FINANCING:)
+    # Robust section parser — strips markdown formatting (**, ##, etc.) before matching
     import re as _re
     _sections = {"FINANCIALS": "", "LIQUIDITY": "", "FINANCING": ""}
     _current  = None
     for _line in raw.splitlines():
-        _stripped = _line.strip()
-        _upper    = _stripped.upper().rstrip(":")
-        if _upper in _sections:
-            _current = _upper
+        # Strip markdown bold/italic/header chars to get the plain text
+        _clean = _re.sub(r"[*#_`]", "", _line).strip().upper().rstrip(":").strip()
+        if _clean in _sections:
+            _current = _clean
             continue
         if _current:
-            _sections[_current] += _line + "\n"
+            # Strip leading markdown from content lines too (e.g. **bullet** → bullet)
+            _content_line = _re.sub(r"\*\*(.+?)\*\*", r"\1", _line)
+            _sections[_current] += _content_line + "\n"
 
-    # If parsing fails (model didn't follow format), dump everything into Financials
-    if not any(_sections.values()):
+    # Fallback: if parser found nothing, dump everything into Financials
+    if not any(v.strip() for v in _sections.values()):
         _sections["FINANCIALS"] = raw
 
     _SECTION_COLORS = {
@@ -505,17 +520,12 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         key=f"csa_chat_input_{company}"
     )
     if _user_q:
-        # Inject current operational notes into context for follow-ups
-        _ops_context = ""
-        _saved_ops = st.session_state.get(ops_notes_key, "")
-        if _saved_ops:
-            _ops_context = f"\n\nOPERATIONAL NOTES (manually entered by team):\n{_saved_ops}"
         st.session_state[chat_key].append({"role": "user", "content": _user_q})
         with st.spinner("Thinking..."):
             try:
                 _resp = ask_claude(
                     _user_q,
-                    context + _ops_context + "\n\nSystem: " + SYSTEM,
+                    context + "\n\n" + SYSTEM,   # context already has ops notes injected
                     st.session_state[chat_key][:-1],
                 )
             except Exception as _e:
@@ -1255,19 +1265,44 @@ def page_company_detail_enhanced():
                     _prev_rows = df_kpi.sort_values("cash_flow_date")
                     _prev = _prev_rows.iloc[-2] if len(_prev_rows) >= 2 else None
 
+                    # ── Deduplicate to one row per display period ─────────────
+                    # Core Power KPIs are stored as monthly rows even when tagged
+                    # 'Quarterly' — three rows per quarter (Jan/Feb/Mar etc.).
+                    # Keep only the last date per calendar quarter so charts show
+                    # one bar per quarter, not three.
+                    if _period_mode == "Quarterly" and not df_kpi.empty:
+                        df_kpi = (df_kpi
+                                  .sort_values("cash_flow_date")
+                                  .assign(_qkey=lambda d: (
+                                      d["cash_flow_date"].dt.year.astype(str) + "Q" +
+                                      d["cash_flow_date"].dt.quarter.astype(str)
+                                  ))
+                                  .drop_duplicates(subset=["_qkey"], keep="last")
+                                  .drop(columns=["_qkey"])
+                                  .reset_index(drop=True))
+                        # Rebuild period_label after dedup
+                        df_kpi["period_label"] = (
+                            "Q" + df_kpi["cash_flow_date"].dt.quarter.astype(str)
+                            + " " + df_kpi["cash_flow_date"].dt.year.astype(str)
+                        )
+                        # Re-derive latest/prev from deduped frame
+                        _latest   = df_kpi.sort_values("cash_flow_date").iloc[-1]
+                        _prev_rows = df_kpi.sort_values("cash_flow_date")
+                        _prev     = _prev_rows.iloc[-2] if len(_prev_rows) >= 2 else None
+
                     _card_cols = st.columns(len(kpi_cards)) if kpi_cards else []
                     for _i, _card in enumerate(kpi_cards):
-                        _attr  = _card["attribute"]
-                        _fmt   = _card["format"]
-                        _label = _card["label"]
-                        _val   = _latest.get(_attr) if _attr in _latest.index else None
-                        _pval  = _prev.get(_attr) if (_prev is not None and _attr in _prev.index) else None
-                        _delta, _dcol = _delta_str(_val, _pval, _fmt)
+                        _attr     = _card["attribute"]
+                        _fmt_str  = _card["format"]   # renamed: never shadow imported _fmt fn
+                        _label    = _card["label"]
+                        _val      = _latest.get(_attr) if _attr in _latest.index else None
+                        _pval     = _prev.get(_attr) if (_prev is not None and _attr in _prev.index) else None
+                        _delta, _dcol = _delta_str(_val, _pval, _fmt_str)
                         with _card_cols[_i]:
                             st.markdown(f"""
                             <div class="kpi-card-co">
                                 <div class="label">{_label}</div>
-                                <div class="value">{_fmt(_val, _fmt)}</div>
+                                <div class="value">{_fmt(_val, _fmt_str)}</div>
                                 <div class="delta" style="color:{_dcol};">{_delta}&nbsp;</div>
                             </div>
                             """, unsafe_allow_html=True)
@@ -1319,7 +1354,11 @@ def page_company_detail_enhanced():
                         ]
                         # Build a label→config lookup
                         _chart_by_label = {c["label"]: c for c in kpi_charts}
-                        _chart_df = df_kpi.sort_values("cash_flow_date").tail(12)
+                        # Dedup chart data: one row per period label
+                        _chart_df = (df_kpi
+                                     .sort_values("cash_flow_date")
+                                     .drop_duplicates(subset=["period_label"], keep="last")
+                                     .tail(12))
 
                         for _group_name, _group_labels in _CHART_GROUPS:
                             _group_charts = [_chart_by_label[l] for l in _group_labels
@@ -1408,7 +1447,10 @@ def page_company_detail_enhanced():
                         # ── Standard 2-column grid for all other companies ────
                         st.markdown('<div class="section-header-co">Trend Charts</div>',
                                     unsafe_allow_html=True)
-                        _chart_df = df_kpi.sort_values("cash_flow_date").tail(12)
+                        _chart_df = (df_kpi
+                                     .sort_values("cash_flow_date")
+                                     .drop_duplicates(subset=["period_label"], keep="last")
+                                     .tail(12))
                         for _row_start in range(0, len(kpi_charts), 2):
                             _pair = kpi_charts[_row_start: _row_start + 2]
                             _gcols = st.columns(2)
