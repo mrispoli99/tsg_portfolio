@@ -58,7 +58,81 @@ def load_company_master() -> pd.DataFrame:
 
 @st.cache_data
 def load_flags() -> pd.DataFrame:
-    return _csv("flags_and_alerts.csv")
+    """
+    Load flags_and_alerts.csv and backfill two columns that the SQL view
+    leaves null for most companies:
+
+      revenue_yoy      — pulled from yoy_growth.csv (latest period per company)
+      ltm_gross_margin — pulled from financials_quarterly.csv (latest gross_margin_pct)
+      ltm_gross_profit — pulled from financials_quarterly.csv (latest gross_profit)
+
+    All other columns come from flags_and_alerts.csv unchanged.
+    """
+    df = _csv("flags_and_alerts.csv")
+    if df.empty:
+        return df
+
+    # ── Backfill revenue_yoy from yoy_growth.csv ─────────────────────────
+    try:
+        yoy = _csv("yoy_growth.csv")
+        if not yoy.empty and "revenue_yoy" in yoy.columns:
+            yoy["cash_flow_date"] = pd.to_datetime(yoy["cash_flow_date"], errors="coerce")
+            # Latest non-null revenue_yoy per company
+            latest_yoy = (
+                yoy[yoy["revenue_yoy"].notna()]
+                .sort_values("cash_flow_date")
+                .groupby("company_name", as_index=False)
+                .last()[["company_name", "revenue_yoy"]]
+                .rename(columns={"revenue_yoy": "_yoy_fill"})
+            )
+            df = df.merge(latest_yoy, on="company_name", how="left")
+            # Only fill where flags CSV has null
+            null_mask = df["revenue_yoy"].isna()
+            df.loc[null_mask, "revenue_yoy"] = df.loc[null_mask, "_yoy_fill"]
+            df = df.drop(columns=["_yoy_fill"])
+    except Exception:
+        pass
+
+    # ── Backfill gross_margin and gross_profit from financials_quarterly.csv ─
+    try:
+        q = _csv("financials_quarterly.csv")
+        if not q.empty:
+            q["cash_flow_date"] = pd.to_datetime(q["cash_flow_date"], errors="coerce")
+            gm_cols = [c for c in ["gross_margin_pct", "gross_profit"] if c in q.columns]
+            if gm_cols:
+                latest_q = (
+                    q[q[gm_cols[0]].notna() if gm_cols else [True] * len(q)]
+                    .sort_values("cash_flow_date")
+                    .groupby("company_name", as_index=False)
+                    .last()[["company_name"] + gm_cols]
+                )
+                # Rename to match flags column names
+                rename_map = {
+                    "gross_margin_pct": "ltm_gross_margin",
+                    "gross_profit":     "ltm_gross_profit",
+                }
+                latest_q = latest_q.rename(columns={
+                    c: rename_map[c] for c in gm_cols if c in rename_map
+                })
+                fill_cols = [rename_map[c] for c in gm_cols if c in rename_map]
+
+                df = df.merge(
+                    latest_q[["company_name"] + fill_cols].rename(
+                        columns={c: f"_{c}_fill" for c in fill_cols}
+                    ),
+                    on="company_name", how="left"
+                )
+                for c in fill_cols:
+                    fill_col = f"_{c}_fill"
+                    if c not in df.columns:
+                        df[c] = None
+                    null_mask = df[c].isna()
+                    df.loc[null_mask, c] = df.loc[null_mask, fill_col]
+                    df = df.drop(columns=[fill_col])
+    except Exception:
+        pass
+
+    return df
 
 @st.cache_data
 def load_ltm_snapshot() -> pd.DataFrame:
