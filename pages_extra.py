@@ -1254,6 +1254,67 @@ def page_company_detail_enhanced():
                 all_attrs  = list({k["attribute"] for k in kpi_cards + kpi_charts})
                 df_kpi     = load_company_kpis(selected, all_attrs, _period_mode)
 
+                # ── Supplement with financials_quarterly for Datasheet attrs ──
+                # Some attributes (Net Leverage, TEV, etc.) live in
+                # financials_quarterly.csv, not company_kpis.csv.
+                # Map them in so KPI cards don't show NaN.
+                _QUARTERLY_FALLBACK = {
+                    "Net Debt / EBITDA (Datasheet)": "net_leverage",
+                    "LTM Free Cash Flow (Datasheet)": "ltm_free_cash_flow",
+                    "Cash (Datasheet)":               "cash",
+                    "Debt Service Coverage Ratio (Datasheet)": "debt_service_coverage",
+                    "Fixed Rate Debt (Datasheet)":    "fixed_rate_debt",
+                    "Floating Rate Debt (Datasheet)": "floating_rate_debt",
+                    "Total Gross Debt (Datasheet)":   "total_gross_debt",
+                    "LTM Net Sales (Actual) (Datasheet)": "revenue",
+                    "LTM Adj. EBITDA (Datasheet)":    "adj_ebitda",
+                }
+                _missing_attrs = [
+                    a for a in all_attrs
+                    if a in _QUARTERLY_FALLBACK and (
+                        df_kpi.empty or a not in df_kpi.columns or
+                        df_kpi[a].isna().all()
+                    )
+                ]
+                if _missing_attrs:
+                    try:
+                        _q_fin = load_quarterly(selected)
+                        if not _q_fin.empty:
+                            _q_fin = _q_fin.copy()
+                            _q_fin["cash_flow_date"] = pd.to_datetime(
+                                _q_fin["cash_flow_date"], errors="coerce"
+                            )
+                            _ptype = {"Monthly": "Monthly", "Quarterly": "Quarterly",
+                                      "Annual": "Annual"}.get(_period_mode, "Quarterly")
+                            if "period" in _q_fin.columns:
+                                _q_fin = _q_fin[_q_fin["period"] == _ptype]
+                            _q_fin = _q_fin.sort_values("cash_flow_date")
+                            # Add period_label if missing
+                            if "period_label" not in _q_fin.columns:
+                                _q_fin["period_label"] = (
+                                    "Q" + _q_fin["cash_flow_date"].dt.quarter.astype(str)
+                                    + " " + _q_fin["cash_flow_date"].dt.year.astype(str)
+                                )
+                            for _attr in _missing_attrs:
+                                _qcol = _QUARTERLY_FALLBACK[_attr]
+                                if _qcol in _q_fin.columns:
+                                    if df_kpi.empty:
+                                        # Build df_kpi from quarterly financials
+                                        df_kpi = _q_fin[
+                                            ["cash_flow_date", "period_label"]
+                                        ].drop_duplicates().copy()
+                                    # Merge the column in by date
+                                    _src = _q_fin[["cash_flow_date", _qcol]].drop_duplicates(
+                                        "cash_flow_date", keep="last"
+                                    )
+                                    if _attr not in df_kpi.columns:
+                                        df_kpi = df_kpi.merge(
+                                            _src.rename(columns={_qcol: _attr}),
+                                            on="cash_flow_date", how="left"
+                                        )
+                    except Exception:
+                        pass
+
                 if df_kpi.empty:
                     st.info(f"No {_period_mode} KPI data found for {selected}. "
                             f"Ensure company_kpis.csv is up to date.")
@@ -1293,10 +1354,17 @@ def page_company_detail_enhanced():
                     _card_cols = st.columns(len(kpi_cards)) if kpi_cards else []
                     for _i, _card in enumerate(kpi_cards):
                         _attr     = _card["attribute"]
-                        _fmt_str  = _card["format"]   # renamed: never shadow imported _fmt fn
+                        _fmt_str  = _card["format"]
                         _label    = _card["label"]
-                        _val      = _latest.get(_attr) if _attr in _latest.index else None
-                        _pval     = _prev.get(_attr) if (_prev is not None and _attr in _prev.index) else None
+                        # Use last non-NaN value — handles sparse attributes
+                        # (e.g. Net Leverage only populated at quarter-end)
+                        _sorted = df_kpi.sort_values("cash_flow_date")
+                        if _attr in _sorted.columns:
+                            _non_null = _sorted[_sorted[_attr].notna()]
+                            _val  = _non_null[_attr].iloc[-1] if not _non_null.empty else None
+                            _pval = _non_null[_attr].iloc[-2] if len(_non_null) >= 2 else None
+                        else:
+                            _val, _pval = None, None
                         _delta, _dcol = _delta_str(_val, _pval, _fmt_str)
                         with _card_cols[_i]:
                             st.markdown(f"""
