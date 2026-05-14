@@ -703,13 +703,15 @@ def page_company_detail_enhanced():
         _val_method = "—"
 
     # Last available quarter's value — Total Realized & Unrealized Value
-    # Both the value and the label come from the same latest quarterly row
-    # so they're always in sync.
+    # Filter strictly to Quarterly to avoid mixing period types in the delta calc
     _last_val_label = "Latest Quarter Value"
     _last_val_str   = "—"
     try:
         _qdf = load_quarterly(selected)
         if not _qdf.empty and "total_value" in _qdf.columns:
+            # Quarterly only — avoids Monthly/Annual rows giving a $0 delta
+            if "period" in _qdf.columns:
+                _qdf = _qdf[_qdf["period"] == "Quarterly"]
             _qdf = _qdf.sort_values("cash_flow_date").dropna(subset=["total_value"])
             if not _qdf.empty:
                 _latest_row    = _qdf.iloc[-1]
@@ -717,16 +719,15 @@ def page_company_detail_enhanced():
                 _latest_period = str(_latest_row.get("period_label", "")).strip()
                 _last_val_label = f"{_latest_period} Value" if _latest_period else "Latest Quarter Value"
                 _last_val_str   = _inv_fmt(_latest_val)
-                # Delta vs. prior quarter
                 if len(_qdf) >= 2:
-                    _prior_val  = float(_qdf.iloc[-2]["total_value"])
-                    _delta      = _latest_val - _prior_val
-                    _sign       = "+" if _delta >= 0 else ""
+                    _prior_val = float(_qdf.iloc[-2]["total_value"])
+                    _delta     = _latest_val - _prior_val
+                    _sign      = "+" if _delta >= 0 else ""
                     _last_val_str += f" ({_sign}{_inv_fmt(_delta)} vs. prior quarter)"
     except Exception:
         pass
 
-    # Company header card — left: name/sector, right: Investment Update table
+    # Company header card — stacked layout: identity on top, Investment Update below
     if flag_row is not None:
         overall   = flag_row.get("overall_flag", "")
         sector    = info_row.get("client_sector", "") if info_row is not None else ""
@@ -752,12 +753,13 @@ def page_company_detail_enhanced():
         st.markdown(f"""
         <div style="background:white; border:1px solid {BORDER}; border-radius:6px;
                     padding:16px 20px; margin-bottom:16px;">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:24px;">
-                <!-- Left: company identity -->
-                <div style="display:flex; align-items:center; gap:14px; flex:1;">
+            <!-- Top row: company identity + flag badge -->
+            <div style="display:flex; align-items:center; justify-content:space-between;
+                        margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:14px;">
                     <div style="background:{NAVY}; color:white; padding:10px 16px;
-                                border-radius:4px; font-weight:700; font-family:Arial; font-size:18px;
-                                flex-shrink:0;">
+                                border-radius:4px; font-weight:700; font-family:Arial;
+                                font-size:18px; flex-shrink:0;">
                         {selected[:2].upper()}
                     </div>
                     <div>
@@ -769,41 +771,37 @@ def page_company_detail_enhanced():
                         </div>
                     </div>
                 </div>
-                <!-- Right: overall flag + Investment Update table -->
-                <div style="display:flex; flex-direction:column; align-items:flex-end; gap:10px; flex-shrink:0;">
-                    <div>{flag_badge(overall)}</div>
-                    <!-- Investment Update card -->
-                    <div style="border:1px solid {BORDER}; border-radius:6px; overflow:hidden;
-                                min-width:320px; font-family:Arial; font-size:12px;">
-                        <div style="background:{NAVY}; color:white; font-weight:700;
-                                    font-size:12px; padding:7px 14px; letter-spacing:0.3px;
-                                    text-align:center;">
-                            Investment Update
-                        </div>
-                        <table style="width:100%; border-collapse:collapse;">
-                            <tr style="border-bottom:1px solid {BORDER};">
-                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
-                                           background:#F8F9FA; width:45%;">Investment Date:</td>
-                                <td style="padding:6px 12px; color:{SLATE};">{_inv_date_fmt}</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid {BORDER};">
-                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
-                                           background:#F8F9FA;">Aggregate Investment:</td>
-                                <td style="padding:6px 12px; color:{SLATE};">{_total_cost}</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid {BORDER};">
-                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
-                                           background:#F8F9FA;">Valuation Methodology:</td>
-                                <td style="padding:6px 12px; color:{SLATE};">{_val_method}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:6px 12px; font-weight:600; color:{NAVY};
-                                           background:#F8F9FA;">{_last_val_label}:</td>
-                                <td style="padding:6px 12px; color:{SLATE}; font-style:italic;">{_last_val_str}</td>
-                            </tr>
-                        </table>
-                    </div>
+                <div>{flag_badge(overall)}</div>
+            </div>
+            <!-- Investment Update card — below company name, left-aligned -->
+            <div style="border:1px solid {BORDER}; border-radius:6px; overflow:hidden;
+                        max-width:420px; font-family:Arial; font-size:12px;">
+                <div style="background:{NAVY}; color:white; font-weight:700;
+                            font-size:12px; padding:7px 14px; letter-spacing:0.3px;">
+                    Investment Update
                 </div>
+                <table style="width:100%; border-collapse:collapse;">
+                    <tr style="border-bottom:1px solid {BORDER};">
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA; width:45%;">Investment Date:</td>
+                        <td style="padding:6px 12px; color:{SLATE};">{_inv_date_fmt}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid {BORDER};">
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">Aggregate Investment:</td>
+                        <td style="padding:6px 12px; color:{SLATE};">{_total_cost}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid {BORDER};">
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">Valuation Methodology:</td>
+                        <td style="padding:6px 12px; color:{SLATE};">{_val_method}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">{_last_val_label}:</td>
+                        <td style="padding:6px 12px; color:{SLATE}; font-style:italic;">{_last_val_str}</td>
+                    </tr>
+                </table>
             </div>
         </div>
         """, unsafe_allow_html=True)

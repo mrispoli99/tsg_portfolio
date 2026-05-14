@@ -83,7 +83,7 @@ def _load_ttm_ebitda(kpis_df: pd.DataFrame) -> pd.DataFrame:
 # Chart 1 — TTM Management EBITDA Since Investment
 # ---------------------------------------------------------------------------
 
-def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
+def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame, period_mode: str = "Quarterly"):
     """
     Bar chart of TTM Management EBITDA at each quarter-end since investment.
     Bars are coloured: red=negative, navy=positive.
@@ -196,7 +196,7 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption(
         "TTM = trailing twelve months (rolling 12-month sum of monthly Management EBITDA). "
-        "Plotted at quarter-ends. Note: this chart always uses monthly data."
+        "Plotted at quarter-ends."
     )
 
     # ── Data table below chart ────────────────────────────────────────────────
@@ -253,9 +253,21 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame):
         except Exception:
             return ""
 
-    # Build table — one column per quarter-end in the chart
-    _col_labels = ttm_q["label"].tolist()
-    _col_dates  = ttm_q["cash_flow_date"].tolist()
+    # Build table columns based on period_mode
+    # TTM bars always show at quarter-ends, but the table columns follow period_mode
+    if period_mode == "Monthly":
+        # Show last 18 months
+        _all_dates = _monthly[_monthly["attribute_name"] == "Management EBITDA"].sort_values("cash_flow_date")["cash_flow_date"]
+        _col_dates  = _all_dates.tail(18).tolist()
+        _col_labels = [d.strftime("%b-%y") for d in _col_dates]
+    elif period_mode == "Annual":
+        # Show year-ends since investment
+        _col_dates  = [d for d in ttm_q["cash_flow_date"].tolist() if pd.Timestamp(d).month == 12]
+        _col_labels = [pd.Timestamp(d).strftime("Dec-%y") for d in _col_dates]
+    else:
+        # Quarterly (default) — same as the chart x-axis
+        _col_labels = ttm_q["label"].tolist()
+        _col_dates  = ttm_q["cash_flow_date"].tolist()
 
     def _nearest(series, date):
         """Get the series value at or before the given date."""
@@ -701,7 +713,7 @@ def render_corepower_visuals(kpis_df: pd.DataFrame, period_mode: str = "Quarterl
     )
 
     # TTM EBITDA always uses monthly data — TTM rolling sum requires monthly granularity
-    render_ttm_ebitda_since_investment(kpis_df)
+    render_ttm_ebitda_since_investment(kpis_df, period_mode)
     st.markdown("<hr style='border-color:#E0E4EA; margin:24px 0;'>", unsafe_allow_html=True)
     render_revenue_mix(kpis_df, period_mode)
     st.markdown("<hr style='border-color:#E0E4EA; margin:24px 0;'>", unsafe_allow_html=True)
