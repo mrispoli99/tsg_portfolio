@@ -100,20 +100,30 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame, period_mode: str =
         st.info("Management EBITDA monthly data not available.")
         return
 
-    # Keep only quarter-end months (Mar / Jun / Sep / Dec) for readability
-    ttm_q = ttm[ttm["cash_flow_date"].dt.month.isin([3, 6, 9, 12])].dropna(
-        subset=["ttm_ebitda"]
-    ).copy()
+    # Filter plot points based on period_mode:
+    #   Monthly   — every month-end (shows granular TTM progression)
+    #   Quarterly — quarter-ends only (Mar/Jun/Sep/Dec)
+    #   Annual    — December only (year-end TTM)
+    ttm_all = ttm.dropna(subset=["ttm_ebitda"]).copy()
+    if period_mode == "Monthly":
+        ttm_q = ttm_all.copy()
+    elif period_mode == "Annual":
+        ttm_q = ttm_all[ttm_all["cash_flow_date"].dt.month == 12].copy()
+    else:
+        ttm_q = ttm_all[ttm_all["cash_flow_date"].dt.month.isin([3, 6, 9, 12])].copy()
 
     if ttm_q.empty:
         st.info("Insufficient data to compute TTM EBITDA.")
         return
 
-    # Toggle: full history vs. last 3 years
+    # Toggle: full history vs. recent window
     _toggle_key = "cpy_ttm_full_history"
     _full = st.toggle("Show full history since investment", value=True, key=_toggle_key)
     if not _full:
-        _cutoff = ttm_q["cash_flow_date"].max() - pd.DateOffset(years=3)
+        _window_years = {"Monthly": 2, "Annual": 10, "Quarterly": 3}
+        _cutoff = ttm_q["cash_flow_date"].max() - pd.DateOffset(
+            years=_window_years.get(period_mode, 3)
+        )
         ttm_q = ttm_q[ttm_q["cash_flow_date"] >= _cutoff]
 
     vals   = ttm_q["ttm_ebitda"].tolist()
@@ -194,9 +204,14 @@ def render_ttm_ebitda_since_investment(kpis_df: pd.DataFrame, period_mode: str =
     )
 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    _period_note = {
+        "Monthly":   "every month-end",
+        "Quarterly": "quarter-ends",
+        "Annual":    "year-ends (December)",
+    }.get(period_mode, "quarter-ends")
     st.caption(
-        "TTM = trailing twelve months (rolling 12-month sum of monthly Management EBITDA). "
-        "Plotted at quarter-ends."
+        f"TTM = trailing twelve months (rolling 12-month sum of monthly Management EBITDA). "
+        f"Plotted at {_period_note}."
     )
 
     # ── Data table below chart ────────────────────────────────────────────────
