@@ -147,25 +147,99 @@ COMPANY_KPI_CONFIG = {
     },
 
     # ----------------------------------------------------------------
-    # Core Power
-    # KPIs from portco slides: membership count, cash revenue,
-    # studio contribution, attendance
+    # Core Power (CorePower Yoga)
+    # Attributes confirmed in 73s as of May 2026.
+    #
+    # KPI CARDS — 4 headline metrics shown at top of Company-Specific Analysis
+    #   Card 1: Member Cash Revenue  (primary top-line for yoga studios)
+    #   Card 2: Management EBITDA    (mgmt-adjusted; used for covenant / IC reporting)
+    #   Card 3: Studio Contribution  (unit-economics proxy; key CPY operating KPI)
+    #   Card 4: Net Debt / EBITDA    (leverage; currently ~4.1x, flagged Yellow)
+    #
+    # KPI CHARTS — grouped by theme for the Company-Specific Analysis tab:
+    #
+    #   REVENUE MIX (what members and non-members pay)
+    #     - Total Studio Revenue        : top-line bar
+    #     - Member Cash Revenue         : member subscription / drop-in
+    #     - Non-Member Cash Revenue     : non-member drop-in / class packs
+    #     - Membership (revenue line)   : recurring membership fees
+    #     - Corporate & Franchise Rev   : B2B / franchise royalties
+    #     - Retail                      : in-studio retail
+    #     - Retail Gross Margin         : retail profitability %
+    #     - Franchise & Royalties       : royalty stream (if franchised studios)
+    #
+    #   STUDIO ECONOMICS (contribution & cost structure)
+    #     - Studio Contribution         : revenue minus direct studio costs
+    #     - Studio Contribution-XO      : contribution excl. occupancy (rent)
+    #     - Studio Contribution-XSL     : contribution excl. straight-line rent
+    #     - Total Studio Expense ex Rent: opex before rent (labor + prog + other)
+    #     - Labor                       : largest studio cost item
+    #     - Occupancy (Cash Rent & NNN) : rent and NNN charges
+    #     - Programming                 : class/instructor costs
+    #     - Pre-Opening Expense         : new studio launch spend (expansion signal)
+    #
+    #   OPERATING METRICS (attendance & pricing)
+    #     - Avg Membership Price        : $/member; pricing power indicator
+    #     - Attendance / Studio (Member): utilization per studio (members)
+    #     - Attendance / Studio (Non-Mem): utilization per studio (non-members)
+    #     - Classes / Day               : class schedule density
+    #
+    #   LIQUIDITY & DEBT (for the Liquidity / Financing sections of AI Summary)
+    #     - LTM Free Cash Flow          : cash generation after capex
+    #     - Cash (Datasheet)            : ending cash balance
+    #     - Debt Service Coverage Ratio : DSCR for covenant monitoring
+    #     - Net Debt / EBITDA           : leverage trend over time
+    #     - Floating Rate Debt          : rate-risk exposure
+    #     - Fixed Rate Debt             : fixed-rate portion
+    #
+    # DATA GAPS — flag for Jess / offshore team to configure in 73s:
+    #   - Aggregate Investment ($461M total cost): not a KPI attribute;
+    #     populate via company_master.total_cost or a new "Aggregate Investment" attribute
+    #   - Valuation Methodology text (e.g. "14.0x LTM EBITDA"):
+    #     company_master.valuation_methodology is currently NULL — needs population
+    #   - Studio count by period: not yet in the attribute list;
+    #     request "Studio Count" or "Total Studios Open" attribute in 73s
+    #   - Prior-quarter TEV delta for Investment Update card:
+    #     TEV (Actual) (Datasheet) exists; delta computed in dashboard code
     # ----------------------------------------------------------------
     "Core Power": {
         "kpi_cards": [
-            {"label": "Cash Revenue",             "attribute": "Member Cash Revenue",            "format": "millions"},
-            {"label": "Adj. EBITDA",              "attribute": "Management EBITDA",              "format": "millions"},
+            {"label": "Member Cash Revenue",      "attribute": "Member Cash Revenue",            "format": "millions"},
+            {"label": "Mgmt. EBITDA",             "attribute": "Management EBITDA",              "format": "millions"},
             {"label": "Studio Contribution",      "attribute": "Studio Contribution",            "format": "millions"},
             {"label": "Net Leverage",             "attribute": "Net Debt / EBITDA (Datasheet)",  "format": "multiple"},
         ],
         "kpi_charts": [
-            {"label": "Total Revenue",            "attribute": "Total Studio Revenue",           "format": "millions", "chart": "bar"},
+            # ── Revenue Mix ──────────────────────────────────────────
+            {"label": "Total Studio Revenue",     "attribute": "Total Studio Revenue",           "format": "millions", "chart": "bar"},
+            {"label": "Member Cash Revenue",      "attribute": "Member Cash Revenue",            "format": "millions", "chart": "bar"},
+            {"label": "Non-Member Revenue",       "attribute": "Non-Member Cash Revenue",        "format": "millions", "chart": "bar"},
             {"label": "Membership Revenue",       "attribute": "Membership",                     "format": "millions", "chart": "bar"},
+            {"label": "Corporate & Franchise Rev","attribute": "Corporate and Franchise Revenue","format": "millions", "chart": "bar"},
             {"label": "Retail Revenue",           "attribute": "Retail",                         "format": "millions", "chart": "bar"},
+            {"label": "Retail Gross Margin",      "attribute": "Retail Gross Margin",            "format": "pct",      "chart": "line"},
+            {"label": "Franchise & Royalties",    "attribute": "Franchise and Royalties",        "format": "millions", "chart": "bar"},
+            # ── Studio Economics ─────────────────────────────────────
             {"label": "Studio Contribution",      "attribute": "Studio Contribution",            "format": "millions", "chart": "bar"},
-            {"label": "Avg Membership Price",     "attribute": "Average Membership Price",       "format": "thousands","chart": "line"},
-            {"label": "Attendance / Studio",      "attribute": "Attendance/Studio Member",       "format": "number",   "chart": "line"},
+            {"label": "Studio Contribution ex-Occ","attribute": "Studio Contribution-XO (excluding Occupancy)", "format": "millions", "chart": "bar"},
+            {"label": "Studio Contribution ex-SLR","attribute": "Studio Contribution-XSL (excluding SLR)",      "format": "millions", "chart": "bar"},
+            {"label": "Studio Expense ex-Rent",   "attribute": "Total Studio Expense (ex Rent & NNN)",          "format": "millions", "chart": "bar"},
+            {"label": "Labor",                    "attribute": "Labor",                          "format": "millions", "chart": "bar"},
+            {"label": "Occupancy (Cash Rent)",    "attribute": "Occupancy (Cash Rent and NNN)",  "format": "millions", "chart": "bar"},
+            {"label": "Programming",              "attribute": "Programming",                    "format": "millions", "chart": "bar"},
+            {"label": "Pre-Opening Expense",      "attribute": "Pre-Opening Expense",            "format": "millions", "chart": "bar"},
+            # ── Operating Metrics ────────────────────────────────────
+            {"label": "Avg Membership Price",     "attribute": "Average Membership Price",       "format": "dollars_from_millions", "chart": "line"},
+            {"label": "Attendance / Studio (Mem)","attribute": "Attendance/Studio Member",       "format": "number",   "chart": "line"},
+            {"label": "Attendance / Studio (Non-Mem)","attribute": "Attendance/Studio Non-Member","format": "number",  "chart": "line"},
             {"label": "Classes / Day",            "attribute": "Classes / Day",                  "format": "number",   "chart": "line"},
+            # ── Liquidity & Debt ─────────────────────────────────────
+            {"label": "LTM Free Cash Flow",       "attribute": "LTM Free Cash Flow (Datasheet)", "format": "millions", "chart": "bar"},
+            {"label": "Cash Balance",             "attribute": "Cash (Datasheet)",               "format": "millions", "chart": "bar"},
+            {"label": "Debt Service Coverage",    "attribute": "Debt Service Coverage Ratio (Datasheet)", "format": "multiple", "chart": "line"},
+            {"label": "Net Leverage Trend",       "attribute": "Net Debt / EBITDA (Datasheet)",  "format": "multiple", "chart": "line"},
+            {"label": "Floating Rate Debt",       "attribute": "Floating Rate Debt (Datasheet)", "format": "millions", "chart": "bar"},
+            {"label": "Fixed Rate Debt",          "attribute": "Fixed Rate Debt (Datasheet)",    "format": "millions", "chart": "bar"},
         ],
     },
 

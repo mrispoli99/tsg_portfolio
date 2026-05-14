@@ -291,32 +291,59 @@ def load_company_kpis(company_name: str, attributes: list, period: str = "Quarte
     """
     Return a wide-format DataFrame for one company's configured KPIs.
 
-    Parameters
-    ----------
-    company_name : str
-        Must match company_name in company_kpis.csv exactly.
-    attributes   : list[str]
-        Attribute names to include (from company_kpi_config.py).
-    period       : str
-        'Quarterly' | 'Monthly' | 'Annual'
-
-    Returns
-    -------
-    DataFrame with columns: cash_flow_date, period_label, <attribute_name...>
-    One row per reporting date, one column per attribute.
+    For attributes that only exist as Monthly data (e.g. Classes / Day,
+    Average Membership Price), automatically aggregates to the requested
+    granularity rather than returning empty:
+      - Quarterly: last monthly value in each calendar quarter
+      - Annual:    last monthly value in each calendar year
+      - Monthly:   pass-through as-is
     """
     df = load_company_kpis_all()
     if df.empty:
         return pd.DataFrame()
 
-    mask = (
-        (df["company_name"] == company_name) &
-        (df["attribute_name"].isin(attributes)) &
-        (df["period"] == period)
-    )
-    sub = df[mask].copy()
-    if sub.empty:
+    co_df = df[df["company_name"] == company_name].copy()
+    if co_df.empty:
         return pd.DataFrame()
+
+    # Split attributes into those that have data at the requested period
+    # and those that only have monthly data (need aggregation)
+    frames = []
+
+    for attr in attributes:
+        attr_df = co_df[co_df["attribute_name"] == attr].copy()
+        if attr_df.empty:
+            continue
+
+        available_periods = set(attr_df["period"].unique())
+
+        if period in available_periods:
+            # Has data at the requested granularity — use directly
+            frames.append(attr_df[attr_df["period"] == period][
+                ["cash_flow_date", "attribute_name", "true_up_value"]
+            ])
+        elif "Monthly" in available_periods and period in ("Quarterly", "Annual"):
+            # Only monthly data available — aggregate up
+            monthly = attr_df[attr_df["period"] == "Monthly"].copy()
+            monthly = monthly.sort_values("cash_flow_date")
+            if period == "Quarterly":
+                monthly["_gkey"] = (
+                    monthly["cash_flow_date"].dt.year.astype(str) + "Q" +
+                    monthly["cash_flow_date"].dt.quarter.astype(str)
+                )
+            else:  # Annual
+                monthly["_gkey"] = monthly["cash_flow_date"].dt.year.astype(str)
+            # Keep last monthly row per quarter/year (most recent value)
+            agg = (monthly.sort_values("cash_flow_date")
+                          .drop_duplicates(subset=["_gkey"], keep="last")
+                          .drop(columns=["_gkey"]))
+            frames.append(agg[["cash_flow_date", "attribute_name", "true_up_value"]])
+        # else: no usable data for this attribute — skip
+
+    if not frames:
+        return pd.DataFrame()
+
+    sub = pd.concat(frames, ignore_index=True)
 
     # Pivot to wide format
     pivot = (sub.pivot_table(

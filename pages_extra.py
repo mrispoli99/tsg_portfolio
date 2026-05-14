@@ -354,12 +354,13 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
 
     SYSTEM = (
         "You are a private equity analyst at TSG Consumer Partners. "
-        "Analyze ONLY the data explicitly provided. Never invent numbers. "
+        "Analyze ONLY the data and context explicitly provided. Never invent numbers. "
         "If a metric is absent, write 'not available'. "
         "Format dollar values as '$X.XM'. Always cite the period for each data point. "
-        "CRITICAL FORMATTING RULE: You MUST use exactly these three section headers on their own "
+        "CRITICAL FORMATTING RULE: You MUST use exactly these four section headers on their own "
         "lines, with no markdown formatting around them — no asterisks, no hashes, no bold:\n"
         "FINANCIALS:\n"
+        "OPERATIONAL:\n"
         "LIQUIDITY:\n"
         "FINANCING:\n"
         "Each section header must be on its own line, followed immediately by bullet points. "
@@ -368,14 +369,7 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
 
     context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
 
-    # Inject saved operational notes into context if present
-    _saved_ops = st.session_state.get(ops_notes_key, "")
-    if _saved_ops:
-        context += f"\n\nOPERATIONAL NOTES (manually entered by team):\n{_saved_ops}"
-
     # ── Context Notes — collapsable, above AI sections ───────────────────────
-    # Accepts free-text notes AND uploaded files (PDF, DOCX, TXT, CSV).
-    # All content is injected into the AI context on generation/regeneration.
     _notes_saved    = st.session_state.get(ops_notes_key, "")
     _files_key      = f"csa_uploaded_files_{company}"
     _files_text_key = f"csa_files_text_{company}"
@@ -384,7 +378,6 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     if _files_text_key not in st.session_state:
         st.session_state[_files_text_key] = {}
 
-    # Label shows a checkmark if any context has been saved
     _has_context = bool(_notes_saved.strip() or st.session_state[_files_text_key])
     _expander_label = "📎 Context Notes & Files" + (" ✓" if _has_context else "")
 
@@ -392,10 +385,9 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         st.caption(
             "Add any notes or upload files to give the AI additional context — "
             "board updates, management commentary, press releases, earnings transcripts, etc. "
-            "Saved content is included every time the summary is generated or regenerated."
+            "Saved content is synthesized into all four AI summary sections."
         )
 
-        # ── Text notes ───────────────────────────────────────────────────────
         _notes_input = st.text_area(
             "Notes",
             value=_notes_saved,
@@ -408,7 +400,6 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
             label_visibility="visible",
         )
 
-        # ── File upload ───────────────────────────────────────────────────────
         _uploaded = st.file_uploader(
             "Upload files",
             type=["pdf", "txt", "csv", "docx", "md"],
@@ -417,7 +408,6 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
             help="PDF, TXT, CSV, DOCX, or Markdown. Text is extracted and added to AI context.",
         )
 
-        # Extract text from newly uploaded files
         if _uploaded:
             for _f in _uploaded:
                 if _f.name not in st.session_state[_files_text_key]:
@@ -442,11 +432,10 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
                                 _txt = _raw_bytes.decode("utf-8", errors="ignore")
                         else:
                             _txt = _raw_bytes.decode("utf-8", errors="ignore")
-                        st.session_state[_files_text_key][_f.name] = _txt[:15000]  # cap per file
+                        st.session_state[_files_text_key][_f.name] = _txt[:15000]
                     except Exception as _fe:
                         st.warning(f"Could not read {_f.name}: {_fe}")
 
-        # Show currently loaded files
         if st.session_state[_files_text_key]:
             st.markdown("**Loaded files:**")
             for _fname, _ftxt in list(st.session_state[_files_text_key].items()):
@@ -460,24 +449,22 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
                         st.session_state.pop(session_key, None)
                         st.rerun()
 
-        # ── Save button ───────────────────────────────────────────────────────
         _save_col, _ = st.columns([1, 6])
         with _save_col:
             if st.button("Save", key=f"csa_notes_save_{company}", use_container_width=True):
                 st.session_state[ops_notes_key] = _notes_input
-                # Clear cached summary so it regenerates with new context
                 st.session_state.pop(session_key, None)
                 st.rerun()
 
-    # Build combined context string from notes + files for AI injection
+    # Build combined extra context from notes + files — done AFTER expander renders
     _all_extra_context = ""
     _saved_notes = st.session_state.get(ops_notes_key, "")
     if _saved_notes.strip():
-        _all_extra_context += f"\n\nADDITIONAL CONTEXT NOTES (added by team):\n{_saved_notes.strip()}"
+        _all_extra_context += f"\n\nADDITIONAL CONTEXT (notes added by team):\n{_saved_notes.strip()}"
     for _fname, _ftxt in st.session_state[_files_text_key].items():
-        _all_extra_context += f"\n\n--- FILE: {_fname} ---\n{_ftxt.strip()}"
+        _all_extra_context += f"\n\n--- UPLOADED FILE: {_fname} ---\n{_ftxt.strip()}"
 
-    # Inject into context before cache check (so regeneration picks it up)
+    # Inject all extra context before the cache check
     if _all_extra_context:
         context += _all_extra_context
 
@@ -485,20 +472,30 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     if session_key not in st.session_state:
         with st.spinner("Generating summary..."):
             try:
+                _has_extra = bool(_all_extra_context.strip())
+                _operational_instruction = (
+                    "OPERATIONAL:\n"
+                    "- 2-3 bullets synthesizing the additional context notes and files provided. "
+                    "Focus on operational highlights, management themes, and qualitative developments. "
+                    "If no additional context was provided, write a single bullet: 'No operational notes provided.'"
+                    if _has_extra else
+                    "OPERATIONAL:\n"
+                    "- No operational notes provided."
+                )
                 prompt = (
-                    f"Using only the data provided, write a structured performance summary for "
-                    f"{company}. Your response MUST contain exactly these three section headers "
+                    f"Using the data and context provided, write a structured performance summary "
+                    f"for {company}. Your response MUST contain exactly these four section headers "
                     f"on their own lines, with no markdown or bold formatting:\n\n"
                     f"FINANCIALS:\n"
                     f"- 2-3 bullets on revenue trajectory, EBITDA, and margin trends\n\n"
+                    f"{_operational_instruction}\n\n"
                     f"LIQUIDITY:\n"
                     f"- 2 bullets on free cash flow, cash balance, and debt service coverage\n\n"
                     f"FINANCING:\n"
                     f"- 2 bullets on leverage level, debt composition (fixed vs. floating), "
                     f"and any notable credit dynamics\n\n"
                     f"Do not use asterisks, bold, hashes, or any other markdown around the section "
-                    f"headers. Write the headers exactly as shown above. "
-                    f"Do not add an Operational section — that is handled separately."
+                    f"headers. Write the headers exactly as shown above."
                 )
                 summary = ask_claude(prompt, context + "\n\n" + SYSTEM, [])
                 st.session_state[session_key] = summary
@@ -512,9 +509,8 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     # ── Render the four sections ──────────────────────────────────────────────
     raw = st.session_state.get(session_key, "")
 
-    # Robust section parser — strips markdown formatting (**, ##, etc.) before matching
     import re as _re
-    _sections = {"FINANCIALS": "", "LIQUIDITY": "", "FINANCING": ""}
+    _sections = {"FINANCIALS": "", "OPERATIONAL": "", "LIQUIDITY": "", "FINANCING": ""}
     _current  = None
     for _line in raw.splitlines():
         _clean = _re.sub(r"[*#_`]", "", _line).strip().upper().rstrip(":").strip()
@@ -546,19 +542,19 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     </div>
     """, unsafe_allow_html=True)
 
-    # Operational — renders saved notes as a read-only display block
-    _ops_display = _saved_notes.strip() if _saved_notes.strip() else "No notes saved yet."
+    # Operational — AI-generated from notes and files
+    _op_content = _sections["OPERATIONAL"].strip()
+    _op_note    = "" if _op_content and _op_content != "No operational notes provided." else (
+        '<span style="font-size:10px; font-weight:400; color:#AAAAAA; margin-left:8px;">'
+        '(add notes above to populate)</span>'
+    )
     st.markdown(f"""
     <div style="border-left:3px solid {_SECTION_COLORS['OPERATIONAL']}; padding:8px 14px;
                 margin-bottom:10px; background:#F8F9FA; border-radius:0 4px 4px 0;">
         <div style="font-size:11px; font-weight:700; color:{_SECTION_COLORS['OPERATIONAL']};
                     font-family:Arial; text-transform:uppercase; letter-spacing:0.6px;
-                    margin-bottom:6px;">
-            Operational
-            <span style="font-size:10px; font-weight:400; color:{SLATE};
-                         text-transform:none; margin-left:8px;">(manual)</span>
-        </div>
-        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_ops_display}</div>
+                    margin-bottom:6px;">Operational{_op_note}</div>
+        <div style="font-size:12px; color:{NAVY}; font-family:Arial; white-space:pre-wrap;">{_op_content or "—"}</div>
     </div>
     """, unsafe_allow_html=True)
 

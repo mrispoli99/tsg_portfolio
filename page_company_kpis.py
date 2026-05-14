@@ -53,6 +53,9 @@ def _fmt(value, fmt: str) -> str:
         return f"{int(round(v)):,}"
     if fmt == "thousands":
         return f"${v:,.0f}k" if abs(v) < 1000 else f"${v / 1000:.1f}M"
+    if fmt == "dollars_from_millions":
+        # Value stored in millions (e.g. 0.000157) → convert to dollars
+        return f"${v * 1_000_000:,.0f}"
     return str(round(v, 2))
 
 
@@ -76,15 +79,17 @@ def _make_bar_chart(df: pd.DataFrame, attr: str, label: str,
                     fmt: str, color: str) -> go.Figure:
     """Grouped bar chart — one bar per period."""
     y = df[attr] if attr in df.columns else pd.Series(dtype=float)
-    # Normalise pct stored as decimals
     if fmt == "pct" and not y.empty and y.dropna().abs().max() <= 2.0:
         y = y * 100
+    if fmt == "dollars_from_millions":
+        y = y * 1_000_000
     fig = go.Figure(go.Bar(
         x=df["period_label"],
         y=y,
         marker_color=color,
         opacity=0.88,
-        text=y.apply(lambda v: _fmt(v, fmt) if pd.notna(v) else ""),
+        text=y.apply(lambda v: f"${v:,.0f}" if pd.notna(v) else "") if fmt == "dollars_from_millions"
+             else y.apply(lambda v: _fmt(v, fmt) if pd.notna(v) else ""),
         textposition="outside",
         textfont=dict(size=9),
     ))
@@ -99,7 +104,7 @@ def _make_bar_chart(df: pd.DataFrame, attr: str, label: str,
                    tickvals=df["period_label"].tolist(),
                    ticktext=df["period_label"].tolist()),
         yaxis=dict(gridcolor=BORDER,
-                   tickformat=".0%" if fmt == "pct" else None,
+                   tickformat=".0%" if fmt == "pct" else ("$,.0f" if fmt == "dollars_from_millions" else None),
                    showticklabels=True,
                    tickfont=dict(size=9)),
     )
@@ -112,6 +117,8 @@ def _make_line_chart(df: pd.DataFrame, attr: str, label: str,
     y = df[attr] if attr in df.columns else pd.Series(dtype=float)
     if fmt == "pct" and not y.empty and y.dropna().abs().max() <= 2.0:
         y = y * 100
+    if fmt == "dollars_from_millions":
+        y = y * 1_000_000
     fig = go.Figure(go.Scatter(
         x=df["period_label"],
         y=y,
@@ -119,6 +126,8 @@ def _make_line_chart(df: pd.DataFrame, attr: str, label: str,
         line=dict(color=color, width=2),
         marker=dict(size=5, color=color),
         connectgaps=True,
+        text=y.apply(lambda v: f"${v:,.0f}" if pd.notna(v) else "") if fmt == "dollars_from_millions" else None,
+        hovertemplate="%{text}<extra></extra>" if fmt == "dollars_from_millions" else None,
     ))
     fig.update_layout(
         height=220,
@@ -131,7 +140,7 @@ def _make_line_chart(df: pd.DataFrame, attr: str, label: str,
                    tickvals=df["period_label"].tolist(),
                    ticktext=df["period_label"].tolist()),
         yaxis=dict(gridcolor=BORDER,
-                   tickformat=".1f" if fmt == "pct" else None,
+                   tickformat=".1f" if fmt == "pct" else ("$,.0f" if fmt == "dollars_from_millions" else None),
                    tickfont=dict(size=9)),
     )
     return fig
