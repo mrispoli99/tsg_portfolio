@@ -72,7 +72,7 @@ def _delta_str(current, previous, fmt: str) -> tuple[str, str]:
     pct = (c - p) / abs(p) * 100
     sign = "+" if pct >= 0 else ""
     color = SEA_GREEN if pct >= 0 else RED_FLAG
-    return f"{sign}{pct:.1f}% vs. PY", color
+    return f"{sign}{pct:.1f}% vs. Prior Period", color
 
 
 def _make_bar_chart(df: pd.DataFrame, attr: str, label: str,

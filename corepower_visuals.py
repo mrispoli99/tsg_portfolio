@@ -470,23 +470,13 @@ def render_studio_pl_waterfall(kpis_df: pd.DataFrame, period_mode: str = "Quarte
     Waterfall chart for a single selected period showing the studio P&L bridge.
     period_mode controls which period granularity is used.
     """
-    st.markdown(
-        '<div class="section-header-co">Studio-Level P&L Waterfall</div>',
-        unsafe_allow_html=True,
-    )
-
     _period_map = {"Monthly": "Monthly", "Quarterly": "Quarterly", "Annual": "Annual"}
     _period_tag = _period_map.get(period_mode, "Quarterly")
     monthly = kpis_df[kpis_df["period"] == _period_tag].copy()
 
-    # Available periods that have all required attributes
     _REQUIRED = [
-        "Total Studio Revenue",
-        "Labor",
-        "Occupancy (Cash Rent and NNN)",
-        "Programming",
-        "Other OPEX",
-        "Studio Contribution",
+        "Total Studio Revenue", "Labor", "Occupancy (Cash Rent and NNN)",
+        "Programming", "Other OPEX", "Studio Contribution",
     ]
     _OPTIONAL_COSTS = [
         ("Regional OH",     "Regional Overhead"),
@@ -494,7 +484,6 @@ def render_studio_pl_waterfall(kpis_df: pd.DataFrame, period_mode: str = "Quarte
         ("Regional Ops",    "Regional Operating Overhead"),
     ]
 
-    # Find periods where all required attrs are present
     _req_dates = None
     for attr in _REQUIRED:
         _dates = set(
@@ -504,8 +493,13 @@ def render_studio_pl_waterfall(kpis_df: pd.DataFrame, period_mode: str = "Quarte
     _req_dates = sorted(_req_dates or [])
 
     if not _req_dates:
-        st.info("Waterfall data not available — need all cost components for at least one month.")
-        return
+        return  # No complete data — show nothing silently
+
+    # Only render header once we know data exists
+    st.markdown(
+        '<div class="section-header-co">Studio-Level P&L Waterfall</div>',
+        unsafe_allow_html=True,
+    )
 
     # Period selector — default to latest
     _sel_col, _ = st.columns([2, 5])

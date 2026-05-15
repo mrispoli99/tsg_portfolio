@@ -1193,44 +1193,20 @@ def page_company_detail_enhanced():
                 st.markdown('<div class="section-header">Select Metric for Chart Below</div>',
                             unsafe_allow_html=True)
 
-                # Inject CSS so active button is navy + white text, inactive is
-                # white + navy text with a border — both always clearly readable.
-                st.markdown("""
-                <style>
-                .kpi-btn-active > div > button {
-                    background-color: #071733 !important;
-                    color: #FFFFFF !important;
-                    border: 2px solid #071733 !important;
-                    font-weight: 700 !important;
-                    border-radius: 6px !important;
-                }
-                .kpi-btn-inactive > div > button {
-                    background-color: #FFFFFF !important;
-                    color: #071733 !important;
-                    border: 1px solid #CBD3DE !important;
-                    font-weight: 400 !important;
-                    border-radius: 6px !important;
-                }
-                .kpi-btn-inactive > div > button:hover {
-                    background-color: #F4F6F9 !important;
-                    border-color: #071733 !important;
-                }
-                </style>
-                """, unsafe_allow_html=True)
-
                 kpi_names_avail = [r["KPI"] for r in pivot_rows]
-                btn_cols = st.columns(min(len(kpi_names_avail), 4))
-                for i, kpi_lbl in enumerate(kpi_names_avail):
-                    is_active_btn = (kpi_lbl == active_co_kpi)
-                    css_class = "kpi-btn-active" if is_active_btn else "kpi-btn-inactive"
-                    with btn_cols[i % 4]:
-                        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
-                        if st.button(kpi_lbl,
-                                     key=f"co_kpi_btn_{selected}_{kpi_lbl}",
-                                     use_container_width=True):
-                            st.session_state[_kpi_key] = kpi_lbl
-                            st.rerun()
-                        st.markdown('</div>', unsafe_allow_html=True)
+                _sel_col, _ = st.columns([3, 4])
+                with _sel_col:
+                    _selected_kpi = st.selectbox(
+                        "Metric",
+                        kpi_names_avail,
+                        index=kpi_names_avail.index(active_co_kpi) if active_co_kpi in kpi_names_avail else 0,
+                        key=f"co_kpi_select_{selected}",
+                        label_visibility="collapsed",
+                    )
+                if _selected_kpi != active_co_kpi:
+                    st.session_state[_kpi_key] = _selected_kpi
+                    st.rerun()
+                active_co_kpi = _selected_kpi
 
                 # ----------------------------------------------------------------
                 # CHART — chart type per spec, with date range selector
