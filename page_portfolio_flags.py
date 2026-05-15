@@ -391,6 +391,22 @@ def render_company_scorecard(row: pd.Series):
         col   = cols[i % 4]
         flag  = row.get(flag_col, "N/A") or "N/A"
         val   = row.get(val_col)
+
+        # Floating Rate % — data not reliable in 73s, render greyed out
+        if label == "Floating Rate %":
+            col.markdown(f"""
+            <div style="background:#F8F8F8;border:1px solid #E0E4EA;border-left:4px solid #CCCCCC;
+                        border-radius:4px;padding:10px 12px;margin-bottom:8px;opacity:0.5;">
+                <div style="font-size:18px;font-weight:700;color:#AAAAAA;font-family:Arial;">
+                    {fmt(val) if val is not None and not pd.isna(val) else "—"}</div>
+                <div style="font-size:10px;color:#AAAAAA;font-family:Arial;margin-top:2px;">
+                    {label}</div>
+                <div style="font-size:9px;color:#CCCCCC;font-family:Arial;margin-top:1px;
+                            font-style:italic;">{threshold.split(" · ")[0]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            continue
+
         color = FLAG_COLORS.get(flag, "#ccc")
         val_str = fmt(val) if val is not None and not pd.isna(val) else "—"
 
