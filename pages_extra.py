@@ -705,16 +705,21 @@ def page_company_detail_enhanced():
         _val_method = "—"
 
     # Last available quarter's value — Total Realized & Unrealized Value
-    # Filter strictly to Quarterly to avoid mixing period types in the delta calc
+    # Filter to Quarterly rows to avoid Monthly/Annual mixing in the delta calc.
+    # Falls back to all rows if Quarterly filter leaves nothing.
     _last_val_label = "Latest Quarter Value"
     _last_val_str   = "—"
     try:
         _qdf = load_quarterly(selected)
         if not _qdf.empty and "total_value" in _qdf.columns:
-            # Quarterly only — avoids Monthly/Annual rows giving a $0 delta
+            _qdf["cash_flow_date"] = pd.to_datetime(_qdf["cash_flow_date"], errors="coerce")
+            # Try Quarterly only first; fall back to all if empty
             if "period" in _qdf.columns:
-                _qdf = _qdf[_qdf["period"] == "Quarterly"]
-            _qdf = _qdf.sort_values("cash_flow_date").dropna(subset=["total_value"])
+                _qdf_q = _qdf[_qdf["period"] == "Quarterly"].dropna(subset=["total_value"])
+                _qdf   = _qdf_q if not _qdf_q.empty else _qdf.dropna(subset=["total_value"])
+            else:
+                _qdf = _qdf.dropna(subset=["total_value"])
+            _qdf = _qdf.sort_values("cash_flow_date")
             if not _qdf.empty:
                 _latest_row    = _qdf.iloc[-1]
                 _latest_val    = float(_latest_row["total_value"])
@@ -1728,7 +1733,7 @@ def page_company_detail_enhanced():
                          use_container_width=True)
 
         try:
-            from db import load_portfolio_flags, load_quarterly
+            from db import load_portfolio_flags
             from page_portfolio_flags import render_company_scorecard
             flags_df    = load_portfolio_flags()
             company_row = flags_df[flags_df["company_name"] == selected]
