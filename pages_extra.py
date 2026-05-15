@@ -346,6 +346,7 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         return
 
     session_key   = f"csa_ai_summary_{company}"
+    context_key   = f"csa_ai_context_hash_{company}"
     chat_key      = f"csa_ai_chat_{company}"
     ops_notes_key = f"csa_ops_notes_{company}"
 
@@ -467,6 +468,16 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     # Inject all extra context before the cache check
     if _all_extra_context:
         context += _all_extra_context
+
+    # ── Auto-invalidate cache if context has changed ──────────────────────────
+    # Hash the context so that if new data arrives (e.g. new quarterly financials,
+    # new notes, new files) the cached summary is automatically cleared.
+    import hashlib as _hashlib
+    _context_hash = _hashlib.md5(context.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    if st.session_state.get(context_key) != _context_hash:
+        # Context changed — clear cached summary so it regenerates fresh
+        st.session_state.pop(session_key, None)
+        st.session_state[context_key] = _context_hash
 
     # ── Auto-generate on first load ───────────────────────────────────────────
     if session_key not in st.session_state:
