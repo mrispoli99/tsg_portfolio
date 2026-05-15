@@ -1746,20 +1746,51 @@ def page_company_detail_enhanced():
                             _float_debt = float(_ql.get("floating_rate_debt") or 0)
                             _as_of      = str(_ql.get("period_label", ""))
 
-                            # Gross Debt / EBITDA
-                            if pd.isna(_flag_row.get("gross_leverage")) and _ltm_ebitda:
-                                _flag_row["gross_leverage"] = _gross_debt / _ltm_ebitda
-                            # Sr. Secured / EBITDA
-                            if pd.isna(_flag_row.get("senior_secured_leverage")) and _ltm_ebitda:
-                                _flag_row["senior_secured_leverage"] = _sr_sec / _ltm_ebitda
-                            # Cash / Gross Debt
-                            if pd.isna(_flag_row.get("cash_to_debt")) and _gross_debt:
-                                _flag_row["cash_to_debt"] = _cash / _gross_debt
-                            # Floating Rate %
-                            if pd.isna(_flag_row.get("floating_rate_pct")) and _gross_debt:
-                                _flag_row["floating_rate_pct"] = _float_debt / _gross_debt
+                            def _flag_lev(v, g, y):
+                                """Flag a leverage multiple: green<g, yellow<y, else red."""
+                                if pd.isna(v): return None
+                                return "Green" if v < g else "Yellow" if v < y else "Red"
 
-                            # Show period being referenced
+                            def _flag_pct_hi(v, g, y):
+                                """Flag a % where higher = worse (e.g. floating rate)."""
+                                if pd.isna(v): return None
+                                return "Green" if v < g else "Yellow" if v < y else "Red"
+
+                            def _flag_pct_lo(v, g, y):
+                                """Flag a % where lower = worse (e.g. cash/debt)."""
+                                if pd.isna(v): return None
+                                return "Green" if v > g else "Yellow" if v > y else "Red"
+
+                            # Gross Debt / EBITDA — thresholds: Green <5x, Yellow <7x, Red ≥7x
+                            if _ltm_ebitda:
+                                _gd_lev = _gross_debt / _ltm_ebitda
+                                if pd.isna(_flag_row.get("gross_leverage")):
+                                    _flag_row["gross_leverage"] = _gd_lev
+                                if pd.isna(_flag_row.get("flag_gross_leverage")):
+                                    _flag_row["flag_gross_leverage"] = _flag_lev(_gd_lev, 5.0, 7.0)
+
+                                # Sr. Secured / EBITDA — thresholds: Green <3.5x, Yellow <5x, Red ≥5x
+                                _ss_lev = _sr_sec / _ltm_ebitda if _sr_sec else _gd_lev
+                                if pd.isna(_flag_row.get("senior_secured_leverage")):
+                                    _flag_row["senior_secured_leverage"] = _ss_lev
+                                if pd.isna(_flag_row.get("flag_senior_secured")):
+                                    _flag_row["flag_senior_secured"] = _flag_lev(_ss_lev, 3.5, 5.0)
+
+                            # Cash / Gross Debt — thresholds: Green >20%, Yellow >10%, Red ≤10%
+                            if _gross_debt:
+                                _ctd = _cash / _gross_debt
+                                if pd.isna(_flag_row.get("cash_to_debt")):
+                                    _flag_row["cash_to_debt"] = _ctd
+                                if pd.isna(_flag_row.get("flag_cash_to_debt")):
+                                    _flag_row["flag_cash_to_debt"] = _flag_pct_lo(_ctd, 0.20, 0.10)
+
+                                # Floating Rate % — thresholds: Green <20%, Yellow <50%, Red ≥50%
+                                _flt = _float_debt / _gross_debt
+                                if pd.isna(_flag_row.get("floating_rate_pct")):
+                                    _flag_row["floating_rate_pct"] = _flt
+                                if pd.isna(_flag_row.get("flag_floating_rate")):
+                                    _flag_row["flag_floating_rate"] = _flag_pct_hi(_flt, 0.20, 0.50)
+
                             st.caption(f"Metrics as of **{_as_of}** · supplemented from quarterly financials where portfolio_flags.csv is null")
                 except Exception:
                     pass
