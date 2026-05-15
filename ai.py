@@ -142,19 +142,19 @@ follow with the driver, note the benchmark comparison.
     return context
 
 
-def ask_claude(question: str, context: str, history: list) -> str:
+def ask_claude(question: str, context: str, history: list, max_tokens: int = 2000) -> str:
     """Send a question to Claude with portfolio context and chat history."""
     client = get_client()
 
     messages = []
-    # Include last 6 messages of history for conversational context
-    for h in history[-6:]:
+    # Include last 10 messages of history for conversational context
+    for h in history[-10:]:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": question})
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=1500,
+        max_tokens=max_tokens,
         system=context,
         messages=messages,
     )

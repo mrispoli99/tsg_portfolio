@@ -358,6 +358,8 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         "Analyze ONLY the data and context explicitly provided. Never invent numbers. "
         "If a metric is absent, write 'not available'. "
         "Format dollar values as '$X.XM'. Always cite the period for each data point. "
+        "For follow-up requests to expand, elaborate, or go deeper — do so fully and thoroughly "
+        "using all available data. Do not artificially limit your response length. "
         "CRITICAL FORMATTING RULE: You MUST use exactly these four section headers on their own "
         "lines, with no markdown formatting around them — no asterisks, no hashes, no bold:\n"
         "FINANCIALS:\n"
@@ -365,7 +367,9 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         "LIQUIDITY:\n"
         "FINANCING:\n"
         "Each section header must be on its own line, followed immediately by bullet points. "
-        "Do not add any other headers, bold text, or markdown formatting anywhere in your response."
+        "Do not add any other headers, bold text, or markdown formatting anywhere in your response. "
+        "For follow-up questions that are NOT asking for the full 4-section format, "
+        "just answer directly without the section headers."
     )
 
     context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
@@ -602,11 +606,17 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
 
     # ── Follow-up chat ────────────────────────────────────────────────────────
     st.caption("Ask follow-up questions — answers are grounded in the data above only.")
-    for _msg in st.session_state[chat_key][2:]:
-        if _msg["role"] == "user":
-            st.markdown(f"> {_msg['content']}")
-        else:
-            st.markdown(_msg["content"])
+
+    # Render prior follow-up messages (skip the initial prompt/response pair at [0] and [1])
+    _followup_msgs = st.session_state[chat_key][2:]
+    if _followup_msgs:
+        for _msg in _followup_msgs:
+            if _msg["role"] == "user":
+                with st.chat_message("user"):
+                    st.markdown(_msg["content"])
+            else:
+                with st.chat_message("assistant"):
+                    st.markdown(_msg["content"])
 
     _user_q = st.chat_input(
         f"Ask about {company}…",
@@ -614,15 +624,20 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     )
     if _user_q:
         st.session_state[chat_key].append({"role": "user", "content": _user_q})
-        with st.spinner("Thinking..."):
-            try:
-                _resp = ask_claude(
-                    _user_q,
-                    context + "\n\n" + SYSTEM,  # context already has notes + files injected
-                    st.session_state[chat_key][:-1],
-                )
-            except Exception as _e:
-                _resp = f"Error: {_e}"
+        with st.chat_message("user"):
+            st.markdown(_user_q)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    _resp = ask_claude(
+                        _user_q,
+                        context + "\n\n" + SYSTEM,
+                        st.session_state[chat_key][:-1],
+                        max_tokens=3000,  # Allow longer responses for expansion requests
+                    )
+                except Exception as _e:
+                    _resp = f"Error: {_e}"
+            st.markdown(_resp)
         st.session_state[chat_key].append({"role": "assistant", "content": _resp})
         st.rerun()
 
