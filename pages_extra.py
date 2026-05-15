@@ -490,7 +490,9 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
                     f"- 2-3 bullets on revenue trajectory, EBITDA, and margin trends\n\n"
                     f"{_operational_instruction}\n\n"
                     f"LIQUIDITY:\n"
-                    f"- 2 bullets on free cash flow, cash balance, and debt service coverage\n\n"
+                    f"- 2 bullets drawing specifically on: LTM Free Cash Flow, Cash Balance, "
+                    f"Debt Service Coverage Ratio, and any covenant data available. "
+                    f"If these metrics are not in the data, say so explicitly.\n\n"
                     f"FINANCING:\n"
                     f"- 2 bullets on leverage level, debt composition (fixed vs. floating), "
                     f"and any notable credit dynamics\n\n"
@@ -796,10 +798,25 @@ def page_company_detail_enhanced():
                                    background:#F8F9FA;">Valuation Methodology:</td>
                         <td style="padding:6px 12px; color:{SLATE};">{_val_method}</td>
                     </tr>
-                    <tr>
+                    <tr style="border-bottom:1px solid {BORDER};">
                         <td style="padding:6px 12px; font-weight:600; color:{NAVY};
                                    background:#F8F9FA;">{_last_val_label}:</td>
                         <td style="padding:6px 12px; color:{SLATE}; font-style:italic;">{_last_val_str}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid {BORDER};">
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">Exit Date:</td>
+                        <td style="padding:6px 12px; color:#AAAAAA; font-style:italic;">—</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid {BORDER};">
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">Exit Type:</td>
+                        <td style="padding:6px 12px; color:#AAAAAA; font-style:italic;">—</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:6px 12px; font-weight:600; color:{NAVY};
+                                   background:#F8F9FA;">MOI Forecast:</td>
+                        <td style="padding:6px 12px; color:#AAAAAA; font-style:italic;">—</td>
                     </tr>
                 </table>
             </div>
@@ -1422,17 +1439,11 @@ def page_company_detail_enhanced():
                             f"Ensure company_kpis.csv is up to date.")
                 else:
                     # ── KPI cards ────────────────────────────────────────────
-                    st.markdown('<div class="section-header-co">Latest Period</div>',
-                                unsafe_allow_html=True)
                     _latest = df_kpi.sort_values("cash_flow_date").iloc[-1]
                     _prev_rows = df_kpi.sort_values("cash_flow_date")
                     _prev = _prev_rows.iloc[-2] if len(_prev_rows) >= 2 else None
 
                     # ── Deduplicate to one row per display period ─────────────
-                    # Core Power KPIs are stored as monthly rows even when tagged
-                    # 'Quarterly' — three rows per quarter (Jan/Feb/Mar etc.).
-                    # Keep only the last date per calendar quarter so charts show
-                    # one bar per quarter, not three.
                     if _period_mode == "Quarterly" and not df_kpi.empty:
                         df_kpi = (df_kpi
                                   .sort_values("cash_flow_date")
@@ -1443,15 +1454,25 @@ def page_company_detail_enhanced():
                                   .drop_duplicates(subset=["_qkey"], keep="last")
                                   .drop(columns=["_qkey"])
                                   .reset_index(drop=True))
-                        # Rebuild period_label after dedup
                         df_kpi["period_label"] = (
                             "Q" + df_kpi["cash_flow_date"].dt.quarter.astype(str)
                             + " " + df_kpi["cash_flow_date"].dt.year.astype(str)
                         )
-                        # Re-derive latest/prev from deduped frame
                         _latest   = df_kpi.sort_values("cash_flow_date").iloc[-1]
                         _prev_rows = df_kpi.sort_values("cash_flow_date")
                         _prev     = _prev_rows.iloc[-2] if len(_prev_rows) >= 2 else None
+
+                    # Build dynamic section header: "Latest Period: Q3 2025 vs. Q2 2025"
+                    _cur_lbl  = str(_latest.get("period_label", "")).strip() if "period_label" in _latest.index else ""
+                    _prev_lbl = str(_prev.get("period_label", "")).strip() if _prev is not None and "period_label" in _prev.index else ""
+                    if _cur_lbl and _prev_lbl:
+                        _period_header = f"Latest Period: {_cur_lbl} vs. {_prev_lbl}"
+                    elif _cur_lbl:
+                        _period_header = f"Latest Period: {_cur_lbl}"
+                    else:
+                        _period_header = "Latest Period"
+                    st.markdown(f'<div class="section-header-co">{_period_header}</div>',
+                                unsafe_allow_html=True)
 
                     _card_cols = st.columns(len(kpi_cards)) if kpi_cards else []
                     for _i, _card in enumerate(kpi_cards):
@@ -1676,11 +1697,11 @@ def page_company_detail_enhanced():
         st.markdown('<div class="section-header">Credit & Performance Flag Scorecard</div>',
                     unsafe_allow_html=True)
 
-        # Threshold explanations — shown as hover context
+        # Threshold explanations — auto-collapsed by default
         ALERT_THRESHOLDS = {
             "Net Debt / EBITDA":      ("< 2.0x",  "2.0–4.0x",  "4.0–6.0x",  "> 6.0x",  "Net Debt ÷ LTM Credit Agreement EBITDA"),
-            "Gross Debt / EBITDA":    ("< 3.0x",  "3.0–5.0x",  "5.0–7.0x",  "> 7.0x",  "Total Gross Debt ÷ LTM Credit Agreement EBITDA"),
-            "Sr. Secured / EBITDA":   ("< 2.0x",  "2.0–3.5x",  "3.5–5.0x",  "> 5.0x",  "Senior Secured Debt ÷ LTM EBITDA"),
+            "Gross Debt / EBITDA":    ("< 3.0x",  "3.0–5.0x",  "5.0–7.0x",  "> 7.0x",  "Total Gross Debt (Datasheet) ÷ LTM Credit Agreement EBITDA"),
+            "Sr. Secured / EBITDA":   ("< 2.0x",  "2.0–3.5x",  "3.5–5.0x",  "> 5.0x",  "Senior Secured Portion (Gross) (Datasheet) ÷ LTM EBITDA"),
             "Interest Coverage":      ("> 4.0x",  "2.5–4.0x",  "1.5–2.5x",  "< 1.5x",  "LTM Adj. EBITDA ÷ LTM Cash Interest Expense"),
             "Debt Service Coverage":  ("> 2.5x",  "1.8–2.5x",  "1.2–1.8x",  "< 1.2x",  "(LTM EBITDA − Capex) ÷ (Interest + Principal)"),
             "Free Cash Flow":         ("Strong+", "Positive",  "0–Slight−", "< 0",     "LTM EBITDA − Capex − ΔNWC − Cash Taxes"),
@@ -1688,11 +1709,11 @@ def page_company_detail_enhanced():
             "TEV / Revenue":          ("< 1.5x",  "1.5–3.0x",  "3.0–5.0x",  "> 5.0x",  "Total Enterprise Value ÷ LTM Net Sales"),
             "TEV / EBITDA":           ("< 6.0x",  "6.0–10.0x", "10.0–16.0x","> 16.0x", "Total Enterprise Value ÷ LTM EBITDA"),
             "MOIC":                   ("> 2.5x",  "1.5–2.5x",  "1.0–1.5x",  "< 1.0x",  "(Realized + Unrealized Value) ÷ Total Cost"),
-            "Cash / Gross Debt":      ("> 20%",   "10–20%",    "5–10%",     "< 5%",    "Cash ÷ Total Gross Debt"),
-            "Floating Rate Debt %":   ("< 20%",   "20–50%",    "50–80%",    "> 80%",   "Floating Rate Debt ÷ Total Gross Debt"),
+            "Cash / Gross Debt":      ("> 20%",   "10–20%",    "5–10%",     "< 5%",    "Cash ÷ Total Gross Debt (Datasheet)"),
+            "Floating Rate Debt %":   ("< 20%",   "20–50%",    "50–80%",    "> 80%",   "Floating Rate Debt (Datasheet) ÷ Total Gross Debt (Datasheet)"),
         }
 
-        with st.expander("Flag Thresholds & Calculation Methodology", expanded=True):
+        with st.expander("Flag Thresholds & Calculation Methodology", expanded=False):
             thresh_rows = []
             for metric, (best, green, yellow, red, calc) in ALERT_THRESHOLDS.items():
                 thresh_rows.append({
@@ -1707,12 +1728,51 @@ def page_company_detail_enhanced():
                          use_container_width=True)
 
         try:
-            from db import load_portfolio_flags
+            from db import load_portfolio_flags, load_quarterly
             from page_portfolio_flags import render_company_scorecard
             flags_df    = load_portfolio_flags()
             company_row = flags_df[flags_df["company_name"] == selected]
+
             if not flags_df.empty and not company_row.empty:
-                render_company_scorecard(company_row.iloc[0])
+                _flag_row = company_row.iloc[0].copy()
+
+                # ── Supplement missing metrics from financials_quarterly ────────
+                # Gross Debt/EBITDA, Sr. Secured/EBITDA, Cash/Gross Debt,
+                # Floating Rate % — all null in portfolio_flags.csv but
+                # available in financials_quarterly.csv
+                try:
+                    _q_supp = load_quarterly(selected)
+                    if not _q_supp.empty and "period" in _q_supp.columns:
+                        _q_supp = (_q_supp[_q_supp["period"] == "Quarterly"]
+                                   .sort_values("cash_flow_date"))
+                        _ql = _q_supp.dropna(subset=["total_gross_debt"]).iloc[-1] if not _q_supp.empty else None
+                        if _ql is not None:
+                            _ltm_ebitda = float(_ql.get("adj_ebitda") or 0)
+                            _gross_debt = float(_ql.get("total_gross_debt") or 0)
+                            _sr_sec     = float(_ql.get("senior_secured_debt") or 0)
+                            _cash       = float(_ql.get("cash") or 0)
+                            _float_debt = float(_ql.get("floating_rate_debt") or 0)
+                            _as_of      = str(_ql.get("period_label", ""))
+
+                            # Gross Debt / EBITDA
+                            if pd.isna(_flag_row.get("gross_leverage")) and _ltm_ebitda:
+                                _flag_row["gross_leverage"] = _gross_debt / _ltm_ebitda
+                            # Sr. Secured / EBITDA
+                            if pd.isna(_flag_row.get("senior_secured_leverage")) and _ltm_ebitda:
+                                _flag_row["senior_secured_leverage"] = _sr_sec / _ltm_ebitda
+                            # Cash / Gross Debt
+                            if pd.isna(_flag_row.get("cash_to_debt")) and _gross_debt:
+                                _flag_row["cash_to_debt"] = _cash / _gross_debt
+                            # Floating Rate %
+                            if pd.isna(_flag_row.get("floating_rate_pct")) and _gross_debt:
+                                _flag_row["floating_rate_pct"] = _float_debt / _gross_debt
+
+                            # Show period being referenced
+                            st.caption(f"Metrics as of **{_as_of}** · supplemented from quarterly financials where portfolio_flags.csv is null")
+                except Exception:
+                    pass
+
+                render_company_scorecard(_flag_row)
             elif flags_df.empty:
                 st.info("portfolio_flags.csv not found. Run export_to_csv.py to generate it.")
             else:
