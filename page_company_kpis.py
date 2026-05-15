@@ -425,6 +425,60 @@ def _build_kpi_context(company: str, df: pd.DataFrame,
             )
             lines.append(f"    {label}: {trend}")
 
+    # ── Liquidity & debt metrics from financials_quarterly ────────────────────
+    # These Datasheet attributes are NOT in company_kpis.csv for most companies —
+    # they live in financials_quarterly.csv. Always include them so the AI
+    # can populate the Liquidity and Financing sections accurately.
+    try:
+        from db import load_quarterly
+        _q = load_quarterly(company)
+        if not _q.empty and "period" in _q.columns:
+            import pandas as _pd_inner
+            _q["cash_flow_date"] = _pd_inner.to_datetime(_q["cash_flow_date"], errors="coerce")
+            _q_quarterly = _q[_q["period"] == "Quarterly"].sort_values("cash_flow_date")
+
+            _LIQUIDITY_COLS = [
+                ("ltm_free_cash_flow",        "LTM Free Cash Flow",           "millions"),
+                ("cash",                      "Cash Balance",                  "millions"),
+                ("debt_service_coverage",     "Debt Service Coverage Ratio",   "multiple"),
+                ("interest_coverage",         "Interest Coverage",             "multiple"),
+                ("ltm_credit_agreement_ebitda","Covenant / Credit Agreement EBITDA", "millions"),
+                ("net_leverage",              "Net Leverage (Net Debt/EBITDA)","multiple"),
+                ("gross_leverage",            "Gross Leverage",                "multiple"),
+                ("total_gross_debt",          "Total Gross Debt",              "millions"),
+                ("senior_secured_debt",       "Senior Secured Debt",           "millions"),
+                ("floating_rate_debt",        "Floating Rate Debt",            "millions"),
+                ("fixed_rate_debt",           "Fixed Rate Debt",               "millions"),
+                ("net_debt",                  "Net Debt",                      "millions"),
+                ("ltm_cash_interest",         "LTM Cash Interest Expense",     "millions"),
+                ("ltm_capex",                 "LTM Capex",                     "millions"),
+            ]
+
+            _added = []
+            for col, label, fmt in _LIQUIDITY_COLS:
+                if col not in _q_quarterly.columns:
+                    continue
+                _non_null = _q_quarterly.dropna(subset=[col])
+                if _non_null.empty:
+                    continue
+                _latest = _non_null.iloc[-1]
+                _period = str(_latest.get("period_label", str(_latest["cash_flow_date"])[:10]))
+                _val    = float(_latest[col])
+                from db import format_millions, format_multiple
+                if fmt == "millions":
+                    _added.append(f"  {label} ({_period}): {format_millions(_val)}")
+                elif fmt == "multiple":
+                    _added.append(f"  {label} ({_period}): {format_multiple(_val)}")
+                else:
+                    _added.append(f"  {label} ({_period}): {_val:.2f}")
+
+            if _added:
+                lines.append("")
+                lines.append("=== Liquidity, Debt & Coverage Metrics (from quarterly financials) ===")
+                lines.extend(_added)
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 
