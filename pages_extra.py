@@ -357,19 +357,16 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
         "You are a private equity analyst at TSG Consumer Partners. "
         "Analyze ONLY the data and context explicitly provided. Never invent numbers. "
         "If a metric is absent, write 'not available'. "
-        "Format dollar values as '$X.XM'. Always cite the period for each data point. "
+        "Format dollar values as '$X.XM' inline in your sentences. "
+        "Always cite the period for each data point (e.g. 'Q3 2025'). "
+        "CRITICAL: Never use backticks (`) anywhere in your response — not around numbers, "
+        "not around metric names, not anywhere. Plain text only. "
         "For follow-up requests to expand, elaborate, or go deeper — do so fully and thoroughly "
-        "using all available data. Do not artificially limit your response length. "
-        "CRITICAL FORMATTING RULE: You MUST use exactly these four section headers on their own "
-        "lines, with no markdown formatting around them — no asterisks, no hashes, no bold:\n"
-        "FINANCIALS:\n"
-        "OPERATIONAL:\n"
-        "LIQUIDITY:\n"
-        "FINANCING:\n"
-        "Each section header must be on its own line, followed immediately by bullet points. "
-        "Do not add any other headers, bold text, or markdown formatting anywhere in your response. "
-        "For follow-up questions that are NOT asking for the full 4-section format, "
-        "just answer directly without the section headers."
+        "using all available data, including trend data across multiple quarters. "
+        "Do not artificially limit your response length. "
+        "SECTION FORMAT: When writing the initial 4-section summary, use exactly these headers "
+        "on their own lines with no markdown: FINANCIALS: / OPERATIONAL: / LIQUIDITY: / FINANCING: "
+        "For follow-up questions, just answer directly without section headers."
     )
 
     context = _build_kpi_context(company, df, kpi_cards, kpi_charts)
@@ -526,7 +523,9 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
     # ── Render the four sections ──────────────────────────────────────────────
     raw = st.session_state.get(session_key, "")
 
+    # Strip inline backtick-code that causes garbled rendering in Streamlit
     import re as _re
+    raw = _re.sub(r'`([^`]+)`', r'\1', raw)
     _sections = {"FINANCIALS": "", "OPERATIONAL": "", "LIQUIDITY": "", "FINANCING": ""}
     _current  = None
     for _line in raw.splitlines():
@@ -633,10 +632,13 @@ def _render_ai_summary_categorized(company: str, df: pd.DataFrame,
                         _user_q,
                         context + "\n\n" + SYSTEM,
                         st.session_state[chat_key][:-1],
-                        max_tokens=3000,  # Allow longer responses for expansion requests
+                        max_tokens=3000,
                     )
                 except Exception as _e:
                     _resp = f"Error: {_e}"
+            # Strip inline backtick-code that causes garbled rendering
+            import re as _re2
+            _resp = _re2.sub(r'`([^`]+)`', r'\1', _resp)
             st.markdown(_resp)
         st.session_state[chat_key].append({"role": "assistant", "content": _resp})
         st.rerun()

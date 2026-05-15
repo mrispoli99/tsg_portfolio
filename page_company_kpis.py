@@ -426,9 +426,6 @@ def _build_kpi_context(company: str, df: pd.DataFrame,
             lines.append(f"    {label}: {trend}")
 
     # ── Liquidity & debt metrics from financials_quarterly ────────────────────
-    # These Datasheet attributes are NOT in company_kpis.csv for most companies —
-    # they live in financials_quarterly.csv. Always include them so the AI
-    # can populate the Liquidity and Financing sections accurately.
     try:
         from db import load_quarterly
         _q = load_quarterly(company)
@@ -438,21 +435,38 @@ def _build_kpi_context(company: str, df: pd.DataFrame,
             _q_quarterly = _q[_q["period"] == "Quarterly"].sort_values("cash_flow_date")
 
             _LIQUIDITY_COLS = [
-                ("ltm_free_cash_flow",        "LTM Free Cash Flow",           "millions"),
-                ("cash",                      "Cash Balance",                  "millions"),
-                ("debt_service_coverage",     "Debt Service Coverage Ratio",   "multiple"),
-                ("interest_coverage",         "Interest Coverage",             "multiple"),
-                ("ltm_credit_agreement_ebitda","Covenant / Credit Agreement EBITDA", "millions"),
-                ("net_leverage",              "Net Leverage (Net Debt/EBITDA)","multiple"),
-                ("gross_leverage",            "Gross Leverage",                "multiple"),
-                ("total_gross_debt",          "Total Gross Debt",              "millions"),
-                ("senior_secured_debt",       "Senior Secured Debt",           "millions"),
-                ("floating_rate_debt",        "Floating Rate Debt",            "millions"),
-                ("fixed_rate_debt",           "Fixed Rate Debt",               "millions"),
-                ("net_debt",                  "Net Debt",                      "millions"),
-                ("ltm_cash_interest",         "LTM Cash Interest Expense",     "millions"),
-                ("ltm_capex",                 "LTM Capex",                     "millions"),
+                ("ltm_free_cash_flow",         "LTM Free Cash Flow",                "millions"),
+                ("cash",                       "Cash Balance",                      "millions"),
+                ("debt_service_coverage",      "Debt Service Coverage Ratio",       "multiple"),
+                ("interest_coverage",          "Interest Coverage",                 "multiple"),
+                ("ltm_credit_agreement_ebitda","Covenant / Credit Agreement EBITDA","millions"),
+                ("net_leverage",               "Net Leverage (Net Debt/EBITDA)",    "multiple"),
+                ("gross_leverage",             "Gross Leverage",                    "multiple"),
+                ("total_gross_debt",           "Total Gross Debt",                  "millions"),
+                ("senior_secured_debt",        "Senior Secured Debt",               "millions"),
+                ("floating_rate_debt",         "Floating Rate Debt",                "millions"),
+                ("fixed_rate_debt",            "Fixed Rate Debt",                   "millions"),
+                ("net_debt",                   "Net Debt",                          "millions"),
+                ("ltm_cash_interest",          "LTM Cash Interest Expense",         "millions"),
+                ("ltm_capex",                  "LTM Capex",                         "millions"),
+                ("revenue",                    "LTM Revenue",                       "millions"),
+                ("adj_ebitda",                 "LTM Adj. EBITDA",                   "millions"),
+                ("adj_ebitda_margin_pct",      "Adj. EBITDA Margin",                "pct"),
             ]
+
+            from db import format_millions, format_multiple
+
+            def _fmt_val(v, fmt):
+                """Format a value cleanly — no backticks, no markdown."""
+                try:
+                    f = float(v)
+                    if fmt == "millions":  return format_millions(f)
+                    if fmt == "multiple":  return format_multiple(f)
+                    if fmt == "pct":
+                        return f"{f*100:.1f}%" if abs(f) <= 2.0 else f"{f:.1f}%"
+                    return str(round(f, 2))
+                except Exception:
+                    return str(v)
 
             _added = []
             for col, label, fmt in _LIQUIDITY_COLS:
@@ -461,20 +475,24 @@ def _build_kpi_context(company: str, df: pd.DataFrame,
                 _non_null = _q_quarterly.dropna(subset=[col])
                 if _non_null.empty:
                     continue
+                # Latest value
                 _latest = _non_null.iloc[-1]
                 _period = str(_latest.get("period_label", str(_latest["cash_flow_date"])[:10]))
                 _val    = float(_latest[col])
-                from db import format_millions, format_multiple
-                if fmt == "millions":
-                    _added.append(f"  {label} ({_period}): {format_millions(_val)}")
-                elif fmt == "multiple":
-                    _added.append(f"  {label} ({_period}): {format_multiple(_val)}")
-                else:
-                    _added.append(f"  {label} ({_period}): {_val:.2f}")
+                _added.append(f"  {label} (latest {_period}): {_fmt_val(_val, fmt)}")
+
+                # Trend — last 4 quarters
+                _trend_rows = _non_null.tail(4)
+                if len(_trend_rows) >= 2:
+                    _trend = ", ".join(
+                        f"{str(r.get('period_label', ''))}: {_fmt_val(float(r[col]), fmt)}"
+                        for _, r in _trend_rows.iterrows()
+                    )
+                    _added.append(f"    trend: {_trend}")
 
             if _added:
                 lines.append("")
-                lines.append("=== Liquidity, Debt & Coverage Metrics (from quarterly financials) ===")
+                lines.append("=== Liquidity, Debt & Coverage Metrics — Quarterly Trend ===")
                 lines.extend(_added)
     except Exception:
         pass
